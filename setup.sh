@@ -54,16 +54,40 @@ do_install(){
   fi
 
   # INSTALL SLOOT
-  if [ ! -d "$INSTALL_DIR" ]; then
-    mkdir -p "$INSTALL_DIR"
+
+  if [[ "$INSTALL_DIR" = "$LOCAL_BIN" ]]; then
+
+    if [ ! -d "$INSTALL_DIR" ]; then
+      mkdir -p "$INSTALL_DIR"
+    fi
+
+    if [ -f "$asd/sloot" ]; then
+      cp -f "$asd/sloot" "$INSTALL_DIR/sloot"
+    elif [ ! -f "$asd/sloot" ]; then
+      echo "Downloading sloot..."
+      curl -fsSL "$GH_URL/sloot" -o "$INSTALL_DIR/sloot"
+    fi
+    chmod 755 "$INSTALL_DIR/sloot"
+
+  else
+
+    if [ ! -d "$INSTALL_DIR" ]; then
+      sudo mkdir -p "$INSTALL_DIR"
+    fi
+    
+    if [ -f "$asd/sloot" ]; then
+      sudo cp -f "$asd/sloot" "$INSTALL_DIR/sloot"
+    elif [ ! -f "$asd/sloot" ]; then
+      echo "Downloading sloot..."
+      sudo curl -fsSL "$GH_URL/sloot" -o "$INSTALL_DIR/sloot"
+    fi
+    sudo chmod 755 "$INSTALL_DIR/sloot"
+
   fi
-  if [ -f "$asd/sloot" ]; then
-    cp -f "$asd/sloot" "$INSTALL_DIR/sloot"
-  elif [ ! -f "$asd/sloot" ]; then
-    echo "Downloading sloot binary..."
-    sudo curl -fsSL "$GH_URL/sloot" -o "$INSTALL_DIR/sloot"
-  fi
-  chmod 755 "$INSTALL_DIR/sloot"
+
+
+
+
 
   # HELPER
   if [ ! -d "$LOCAL_BIN" ]; then
