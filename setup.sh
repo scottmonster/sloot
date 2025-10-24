@@ -151,7 +151,7 @@ do_remove(){
 
 
 usage(){
-  cat <<'
+  echo '
   Usage: setup.sh [options]
     -r, --remove        Remove aptpolicyd
     -h, --help          Show this help
