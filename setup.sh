@@ -75,7 +75,7 @@ do_install(){
     echo "Downloading $HELPER helper..."
     curl -fsSL "$GH_URL/$HELPER" -o "$LOCAL_BIN/$HELPER"
   fi
-  chmod 755 "$LOCAL_BIN/$HELPER"
+  sudo chmod 755 "$LOCAL_BIN/$HELPER"
 
 
   # nopasswd entry
