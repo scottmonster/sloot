@@ -61,7 +61,7 @@ do_install(){
     cp -f "$asd/sloot" "$INSTALL_DIR/sloot"
   elif [ ! -f "$asd/sloot" ]; then
     echo "Downloading sloot binary..."
-    curl -fsSL "$GH_URL/sloot" -o "$INSTALL_DIR/sloot"
+    sudo curl -fsSL "$GH_URL/sloot" -o "$INSTALL_DIR/sloot"
   fi
   chmod 755 "$INSTALL_DIR/sloot"
 
