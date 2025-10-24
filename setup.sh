@@ -20,7 +20,7 @@ export HELPER_PATH="$LOCAL_BIN/$HELPER"
 
 install_deps(){
   echo "installing deps: $deps"
-  sudo apt install -y "$deps"
+  sudo apt install -y $deps
 }
 
 do_install(){
