@@ -8,7 +8,7 @@ Type=oneshot
 # Option A: two ExecStart lines (run sequentially; stops on first failure)
 # ExecStart=/home/scott/share/qyksys/.qyksys_master/servcies_master/slootd/sloot -n
 # ExecStart=/home/scott/.local/bin/dms
-ExecStart=%h/.local/bin/dms
+ExecStart=$HELPER_PATH
 
 # Option B: one shell line (same effect; use if you need &&, env, pipes, etc.)
 Environment=HOME=%h

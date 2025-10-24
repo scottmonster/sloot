@@ -17,6 +17,12 @@ git log --follow --oneline --name-only -- path/to/file
 
 
 
+we need domysloot in "$HOME/.local/bin"
+we need config in "$REPO_DIR/.config"
+we need excludes in "$HOME/.config/sloot"
+
+expanded="$(envsubst <<<"$text")"
 
 
+if not .config curl -fsSL "$GH_URL/<file name and/or path>"
 
