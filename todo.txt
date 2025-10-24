@@ -1,0 +1,22 @@
+
+
+
+
+
+
+
+add searching commits for changed files
+git log --oneline --name-only --
+
+
+
+git log --oneline --name-only -- path/one path/two dir/three/
+
+follow rename single file only
+git log --follow --oneline --name-only -- path/to/file
+
+
+
+
+
+

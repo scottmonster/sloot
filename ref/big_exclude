@@ -1,0 +1,350 @@
+# =============================================================================
+# BIG_EXCLUDE LIST for SLOOT - System Level OS Observation Tool
+#
+# Purpose: Comprehensive exclusion list for files/directories that should
+#          never be tracked due to size, volatility, or sensitivity.
+#
+# Format:  One path per line
+#          - Absolute paths (e.g., /etc/file) for system files
+#          - Relative paths (e.g., ~/.file) for user files
+#          - Variables ($HOME, $REPO_DIR, ~) will be expanded
+#          - Glob patterns supported: *, **, ?, [abc]
+#          - All entries are excludes (no keyword required, but included for clarity)
+# =============================================================================
+
+# ---------------------- Repository Protection ---------------------------
+# Prevent infinite recursion by excluding the SLOOT repository itself
+exclude $REPO_DIR/**                          # All repository descendants
+exclude $REPO_DIR/user_files/**               # Mirrored user files
+exclude $REPO_DIR/system_files/**             # Mirrored system files
+
+# ---------------------- Editor Temporary Files ---------------------------
+# Exclude backup and swap files created by text editors to reduce noise
+exclude **/*~                                 # Editor backup suffix
+exclude **/.#*                                # Emacs lockfiles
+exclude **/#*#                                # Emacs autosaves
+exclude **/*.swp                              # Vim swap files
+exclude **/*.swo                              # Vim swap alt
+exclude **/*.swn                              # Vim swap alt 2
+exclude **/.*.sw?                             # Vim swap variants
+exclude **/*.bak                              # Generic backup files
+exclude **/*.tmp                              # Temporary files
+exclude **/*.temp                             # Temporary files
+exclude **/*.lock                             # Lock files
+exclude **/.DS_Store                          # macOS metadata
+
+# ---------------------- Version Control Internals ---------------------------
+# Exclude VCS directories to avoid tracking repository metadata
+exclude **/.git                               # Git repositories
+exclude **/.svn                               # SVN repositories
+exclude **/.hg                                # Mercurial repositories
+exclude **/.bzr                               # Bazaar repositories
+exclude ~/.oh-my-zsh/.git                     # Oh-My-Zsh git repo
+
+# ---------------------- User Caches and Volatile Data ---------------------------
+# Exclude user-level caches and temporary data that regenerate automatically
+exclude ~/.cache                              # Global user cache
+exclude ~/.local/share/Trash                  # Trash directory
+exclude ~/.local/state                        # Application state files
+exclude ~/.thumbnails                         # Image thumbnail cache
+exclude ~/.nv/ComputeCache                    # NVIDIA compute cache
+exclude ~/.xsession-errors                    # X session error logs
+exclude ~/.xsession-errors.old                # Rotated X session logs
+
+# ---------------------- Security Sensitive Files (CRITICAL) ---------------------------
+# Never track private keys, credentials, or authentication tokens
+exclude ~/.ssh/id_*                           # SSH private keys
+exclude ~/.ssh/*_rsa                          # RSA private keys
+exclude ~/.ssh/*_ed25519                      # Ed25519 private keys
+exclude ~/.ssh/*_ecdsa                        # ECDSA private keys
+exclude ~/.ssh/authorized_keys                # May reveal infrastructure
+exclude ~/*.key                               # Generic key files
+exclude ~/.gnupg/private-keys-v1.d            # GPG private keys
+exclude ~/.gnupg/*key*                        # GPG key files
+exclude ~/.gnupg/*.lock                       # GPG lock files
+exclude ~/.gnupg/trustdb.gpg                  # GPG trust database
+exclude ~/.pki                                # TLS client certificates
+exclude ~/.local/share/keyrings               # System keyring secrets
+exclude ~/.password-store                     # Pass password manager
+exclude ~/.config/KeePass*                    # KeePass database
+exclude ~/.config/Bitwarden                   # Bitwarden vault
+exclude ~/.config/1Password                   # 1Password vault
+
+# ---------------------- Cloud Provider Credentials ---------------------------
+# Exclude cloud provider authentication files and tokens
+exclude ~/.aws/credentials                    # AWS credentials
+exclude ~/.aws                                # AWS full directory
+exclude ~/.config/gcloud/credentials*         # GCloud credentials
+exclude ~/.config/gcloud/access_tokens.db     # GCloud tokens
+exclude ~/.azure/accessTokens.json            # Azure tokens
+exclude ~/.azure                              # Azure full directory
+exclude ~/.oci                                # Oracle Cloud credentials
+exclude ~/.kube/config                        # Kubernetes config with creds
+exclude ~/.kube/cache                         # Kubernetes cache
+exclude ~/.docker/config.json                 # Docker auth tokens
+
+# ---------------------- Development Tool Credentials ---------------------------
+# Exclude package manager and tool authentication
+exclude ~/.netrc                              # Network credentials
+exclude ~/.npmrc                              # NPM credentials (if has auth)
+exclude ~/.pypirc                             # PyPI credentials
+exclude ~/.cargo/credentials*                 # Rust cargo credentials
+exclude ~/.gem/credentials                    # Ruby gem credentials
+exclude ~/.config/gh/hosts.yml                # GitHub CLI tokens
+exclude ~/.config/hub                         # Hub CLI tokens
+exclude ~/.config/containers/auth.json        # Container registry auth
+
+# ---------------------- Browser Sensitive Data ---------------------------
+# Exclude cookies, passwords, and session data from browsers
+exclude ~/.mozilla/firefox/*/cookies.sqlite   # Firefox cookies
+exclude ~/.mozilla/firefox/*/key*.db          # Firefox key database
+exclude ~/.mozilla/firefox/*/logins.json      # Firefox saved passwords
+exclude ~/.mozilla/firefox/*/sessionstore*    # Firefox session data
+exclude ~/.mozilla/firefox/*/cache2           # Firefox cache
+exclude ~/.mozilla/firefox/*/storage/default/* # Firefox site data
+exclude ~/.mozilla/firefox/*/crashes          # Firefox crash reports
+exclude ~/.config/BraveSoftware/*/Cookies     # Brave cookies
+exclude ~/.config/BraveSoftware/*/Cache       # Brave cache
+exclude ~/.config/BraveSoftware/*/Crashpad    # Brave crash reports
+exclude ~/.config/chromium/*/Cookies          # Chromium cookies
+exclude ~/.config/chromium/*/Cache            # Chromium cache
+exclude ~/.config/chromium/*/Code Cache       # Chromium code cache
+exclude ~/.config/google-chrome/*/Cookies     # Chrome cookies
+exclude ~/.config/google-chrome/*/Cache       # Chrome cache
+exclude ~/.config/google-chrome/*/Code Cache  # Chrome code cache
+exclude ~/.config/*/Login Data                # Generic browser passwords
+exclude ~/.config/*/Web Data                  # Generic browser web data
+exclude ~/.config/*/Crashpad                  # Generic crash reports
+
+# ---------------------- Email and Communication ---------------------------
+# Exclude email and chat application data for privacy
+exclude ~/.thunderbird/*/ImapMail             # Thunderbird IMAP mail
+exclude ~/.thunderbird/*/Mail                 # Thunderbird local mail
+exclude ~/.local/share/evolution              # Evolution email client
+exclude ~/.config/mutt/accounts               # Mutt email accounts
+exclude ~/.config/Signal                      # Signal messenger
+exclude ~/.config/discord/Local Storage       # Discord local storage
+exclude ~/.config/Slack/Cache                 # Slack cache
+exclude ~/.config/Slack/Code Cache            # Slack code cache
+exclude ~/.config/Slack/Local Storage         # Slack local storage
+exclude ~/.purple/accounts.xml                # Pidgin/libpurple accounts
+exclude ~/.purple/logs                        # Chat logs
+exclude ~/.config/zoomus/CrashReports         # Zoom crash reports
+
+# ---------------------- Cryptocurrency Wallets ---------------------------
+# Exclude cryptocurrency wallet files for security
+exclude ~/.bitcoin/wallet.dat                 # Bitcoin wallet
+exclude ~/.ethereum/keystore                  # Ethereum keystore
+exclude ~/.local/share/multibit               # MultiBit wallet
+exclude ~/.electrum/wallets                   # Electrum wallets
+
+# ---------------------- Session and Runtime Data ---------------------------
+# Exclude X11 and session runtime files
+exclude ~/.Xauthority                         # X11 authorization
+exclude ~/.ICEauthority                       # ICE authorization
+exclude ~/.dbus                               # D-Bus session data
+
+# ---------------------- Programming Language Caches ---------------------------
+# Exclude language-specific caches and build artifacts to save space
+exclude **/__pycache__                        # Python bytecode cache
+exclude **/*.pyc                              # Python compiled files
+exclude **/*.pyo                              # Python optimized files
+exclude **/.pytest_cache                      # Pytest cache
+exclude **/.mypy_cache                        # Mypy type checker cache
+exclude **/.ruff_cache                        # Ruff linter cache
+exclude **/.tox                               # Tox test environment
+exclude **/.venv                              # Python virtual environment
+exclude **/venv                               # Python virtual environment
+exclude **/node_modules                       # Node.js dependencies
+exclude **/.npm                               # NPM cache
+exclude **/.yarn                              # Yarn cache
+exclude **/.cargo/registry                    # Rust cargo registry
+exclude **/.cargo/git                         # Rust cargo git deps
+exclude **/target/debug                       # Rust debug builds
+exclude **/target/release                     # Rust release builds
+exclude **/.gradle                            # Gradle cache
+exclude **/.m2/repository                     # Maven repository
+exclude **/build                              # Generic build directory
+exclude **/dist                               # Generic distribution directory
+
+# ---------------------- Package Manager Caches ---------------------------
+# Exclude user-level package manager caches
+exclude ~/.cache/pip                          # Python pip cache
+exclude ~/.cache/npm                          # NPM cache
+exclude ~/.cargo/registry                     # Cargo registry cache
+exclude ~/.cargo/git                          # Cargo git cache
+exclude ~/.conda/pkgs                         # Conda package cache
+exclude ~/.rbenv/cache                        # Ruby rbenv cache
+exclude ~/.pyenv/cache                        # Python pyenv cache
+exclude ~/.node-gyp                           # Node-gyp headers
+exclude ~/.bundle/cache                       # Ruby bundler cache
+exclude ~/.gradle/caches                      # Gradle caches
+exclude ~/.m2/repository                      # Maven local repo
+exclude ~/.ivy2/cache                         # Ivy cache
+exclude ~/.rustup/toolchains/*/share          # Rust toolchain docs
+exclude ~/.gem/ruby/*/cache                   # Ruby gem cache
+exclude ~/.composer/cache                     # PHP composer cache
+exclude ~/.npm/_cacache                       # NPM cache
+
+# ---------------------- IDE and Editor Caches ---------------------------
+# Exclude IDE caches and extensions to reduce size
+exclude ~/.vscode/extensions                  # VS Code extensions
+exclude ~/.vscode-oss/extensions              # VSCodium extensions
+exclude ~/.config/Code/Cache                  # VS Code cache
+exclude ~/.config/Code/CachedData             # VS Code cached data
+exclude ~/.config/Code/logs                   # VS Code logs
+exclude ~/.config/VSCodium/Cache              # VSCodium cache
+exclude ~/.config/VSCodium/CachedData         # VSCodium cached data
+exclude ~/.config/VSCodium/logs               # VSCodium logs
+exclude ~/.config/sublime-text/Cache          # Sublime Text cache
+exclude ~/.local/share/JetBrains              # JetBrains IDEs data
+exclude ~/.config/JetBrains/*/eval            # JetBrains eval
+exclude ~/.config/JetBrains/*/caches          # JetBrains caches
+exclude ~/.AndroidStudio*                     # Android Studio
+exclude **/.idea/workspace.xml                # IntelliJ workspace
+exclude **/.idea/tasks.xml                    # IntelliJ tasks
+exclude **/.idea/usage.statistics.xml         # IntelliJ usage stats
+
+# ---------------------- Application Caches ---------------------------
+# Exclude various application caches
+exclude ~/.config/obsidian/Cache              # Obsidian cache
+exclude ~/.config/Atom/Cache                  # Atom editor cache
+exclude ~/.config/Postman/blob_storage        # Postman blob storage
+exclude ~/.config/Spotify/Browser/Cache       # Spotify cache
+exclude ~/.local/share/baloo                  # KDE Baloo file indexer
+exclude ~/.local/share/akonadi                # KDE Akonadi PIM data
+
+# ---------------------- Flatpak Application Data ---------------------------
+# Exclude Flatpak caches and runtimes
+exclude ~/.var/app/*/cache                    # Flatpak app cache
+exclude ~/.var/app/*/data/Cache               # Flatpak data cache
+exclude ~/.var/app/*/data/cache               # Flatpak data cache (lowercase)
+exclude ~/.local/share/flatpak/runtime        # User Flatpak runtimes
+exclude ~/.var/app/com.valvesoftware.Steam/.local/share/Steam/steamapps  # Steam games via Flatpak
+
+# ---------------------- AppImage Caches ---------------------------
+# Exclude cache directories within AppImage application folders
+exclude $HOME/Applications/*/Cache            # AppImage cache
+exclude $HOME/Applications/*/cache            # AppImage cache (lowercase)
+
+# ---------------------- Gaming Platforms ---------------------------
+# Exclude game files and platform data due to large size
+exclude ~/.steam                              # Steam symlink
+exclude ~/.local/share/Steam/steamapps        # Steam game files
+exclude ~/.steam/steam/steamapps              # Steam game files alt
+exclude ~/.wine                               # Wine prefix
+exclude ~/.PlayOnLinux                        # PlayOnLinux data
+exclude ~/.local/share/lutris/runners         # Lutris game runners
+
+# ---------------------- Virtualization and Containers ---------------------------
+# Exclude VM and container storage
+exclude ~/.local/share/containers/storage     # Podman container storage
+exclude ~/.local/share/docker                 # Docker data
+
+# ---------------------- Log Files ---------------------------
+# Exclude log files as they are volatile and grow large
+exclude **/*.log                              # Generic log files
+exclude **/*.log.*                            # Rotated log files
+exclude **/logs                               # Log directories
+
+# ---------------------- System Volatile Directories ---------------------------
+# Exclude system directories that are volatile or regenerated
+exclude /dev                                  # Device files
+exclude /proc                                 # Kernel proc filesystem
+exclude /sys                                  # Kernel sys filesystem
+exclude /run                                  # Runtime data
+exclude /tmp                                  # Temporary files
+exclude /var/tmp                              # Temporary files
+exclude /var/cache                            # System cache
+exclude /var/run                              # Runtime symlink
+exclude /var/lock                             # Lock files
+exclude /lost+found                           # Filesystem recovery
+exclude /mnt                                  # Temporary mount point
+exclude /media                                # Removable media mount
+exclude /srv                                  # Service data
+exclude /swapfile                             # Swap file
+exclude /swap.img                             # Swap image
+exclude /snap                                 # Snap mounts
+
+# ---------------------- System Caches and Logs ---------------------------
+# Exclude system-level caches and logs
+exclude /var/log                              # System logs
+exclude /var/log/**                           # All system logs
+exclude /var/lib/systemd/coredump             # Core dumps
+exclude /var/lib/docker                       # Docker images/volumes
+exclude /var/lib/containers                   # Podman containers
+exclude /var/lib/flatpak/runtime              # System Flatpak runtimes
+exclude /var/lib/snapd/snaps                  # Snap packages
+exclude /var/cache/pacman                     # Pacman cache
+exclude /var/cache/apt                        # APT cache
+
+# ---------------------- System Package Manager State ---------------------------
+# Exclude volatile package manager state
+exclude /var/lib/dpkg/available               # DPKG available file
+exclude /var/lib/dpkg/lock*                   # DPKG lock files
+exclude /var/lib/apt/lists                    # APT package lists
+exclude /var/lib/pacman/sync                  # Pacman sync databases
+
+# ---------------------- Large System Directories ---------------------------
+# Exclude large directories that are not configuration
+exclude /usr/src                              # Kernel sources
+exclude /usr/share/doc                        # Documentation
+exclude /usr/share/man                        # Manual pages
+exclude /usr/share/icons                      # Icon themes
+exclude /usr/local/share/doc                  # Local documentation
+exclude /usr/local/share/man                  # Local manual pages
+exclude /lib/firmware                         # Firmware blobs
+exclude /usr/lib/firmware                     # Firmware blobs
+exclude /usr/lib/modules                      # Kernel modules
+
+# ---------------------- System Security Sensitive Files ---------------------------
+# Exclude system-level security files and keys
+exclude /etc/ssh/ssh_host_*                   # SSH host keys
+exclude /etc/ssh/*key                         # SSH key files
+exclude /etc/machine-id                       # Machine unique ID
+exclude /var/lib/dbus/machine-id              # D-Bus machine ID
+exclude /etc/random-seed                      # Random seed
+exclude /var/lib/systemd/random-seed          # Systemd random seed
+exclude /etc/wireguard/*.key                  # WireGuard private keys
+exclude /etc/wireguard/*.conf                 # WireGuard configs (may have keys)
+exclude /etc/openvpn/*.ovpn                   # OpenVPN configs (may have creds)
+exclude /etc/krb5.keytab                      # Kerberos keytab
+exclude /etc/cups/certs                       # CUPS certificates
+exclude /etc/cups/ssl                         # CUPS SSL material
+
+# ---------------------- System NetworkManager State ---------------------------
+# Exclude NetworkManager connection secrets and volatile state
+exclude /etc/NetworkManager/system-connections/*.nmconnection  # Connection files with secrets
+exclude /etc/NetworkManager/system-connections/*tmp*  # Temporary files
+exclude /var/lib/NetworkManager/*             # NetworkManager runtime state
+exclude /var/lib/dbus                         # D-Bus runtime state
+
+# ---------------------- System Boot and Generated Content ---------------------------
+# Exclude boot files and generated content
+exclude /boot/*                               # Kernel and initramfs
+exclude /boot/efi/*                           # EFI system partition
+exclude /etc/mtab                             # Mount table (volatile)
+exclude /etc/adjtime                          # Hardware clock drift
+
+# ---------------------- System Systemd Generated Links ---------------------------
+# Exclude systemd generated symlinks that are reproducible
+exclude /etc/systemd/system/*.wants           # Systemd wants links
+exclude /etc/systemd/user/*.wants             # Systemd user wants links
+exclude /etc/systemd/system/*.requires        # Systemd requires links
+exclude /etc/systemd/user/*.requires          # Systemd user requires links
+exclude /etc/systemd/system/*.preset          # Systemd preset links
+
+# ---------------------- System LVM Archives ---------------------------
+# Exclude LVM backup and archive files
+exclude /etc/lvm/archive                      # LVM archives
+exclude /etc/lvm/backup                       # LVM backups
+
+# ---------------------- System Pacman Keyring ---------------------------
+# Exclude Arch Linux pacman keyring state
+exclude /etc/pacman.d/gnupg                   # Pacman GPG keyring
+
+# ---------------------- System Cron Root User ---------------------------
+# Exclude root crontab for privacy
+exclude /var/spool/cron/crontabs/root         # Root user crontab
+
+# End of big_exclude

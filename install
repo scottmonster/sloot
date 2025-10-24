@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+install(){
+
+  ACTUAL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  asd="$ACTUAL_SCRIPT_DIR"
+  # ~/.config/systemd/user/sloot.service
+
+  # config to repo dir
+  REPO_DIR="${SLOOT_DIR:-$HOME/sloot}"
+  [[ ! -d "$REPO_DIR" ]] && mkdir -p "$REPO_DIR"
+  cp "$asd/.config" "$REPO_DIR/.config"
+
+  # explicity excludes to user config dir
+  USER_CONFIG_DIR="$HOME/.config/sloot"
+  [[ ! -d "$USER_CONFIG_DIR" ]] && mkdir -p "$USER_CONFIG_DIR"
+  cp "$asd/explicit_excludes" "$USER_CONFIG_DIR/explicit_excludes"
+
+  # sloot to bin
+  localbin="$HOME/.local/bin"
+  [[ ! -d "$localbin" ]] && mkdir -p "$localbin"
+  cp "$asd/sloot" "$localbin/sloot"
+  cp "$asd/dms" "$localbin/dms"
+
+  # nopasswd enabled
+  npfile="$ACTUAL_SCRIPT_DIR/files/nopasswd"
+  nptext="$USER ALL=(root) NOPASSWD: $HOME/.local/bin/sloot"
+  echo "$nptext" | sudo tee "/etc/sudoers.d/50-sloot-$USER"
+
+
+  # service and timer
+  sysduser="$HOME/.config/systemd/user"
+  mkdir -p "$sysduser"
+  cp -f "$asd/files/sloot.service" "$sysduser/sloot.service"
+  cp -f "$asd/files/sloot.timer" "$sysduser/sloot.timer"
+
+
+  systemctl --user daemon-reload
+  systemctl --user enable sloot.service
+  systemctl --user enable sloot.timer --now 
+
+}
+
+
+remove(){
+  ACTUAL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  asd="$ACTUAL_SCRIPT_DIR"
+
+  REPO_DIR="${SLOOT_DIR:-$HOME/sloot}"
+
+  # Stop and disable systemd user units
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user stop sloot.timer 2>/dev/null || true
+    systemctl --user disable sloot.timer 2>/dev/null || true
+    systemctl --user stop sloot.service 2>/dev/null || true
+    systemctl --user disable sloot.service 2>/dev/null || true
+    systemctl --user daemon-reload 2>/dev/null || true
+  fi
+
+  # Remove installed service and timer files
+  sysduser="$HOME/.config/systemd/user"
+  if [[ -d "$sysduser" ]]; then
+    [[ -f "$sysduser/sloot.service" ]] && rm -f -- "$sysduser/sloot.service"
+    [[ -f "$sysduser/sloot.timer" ]] && rm -f -- "$sysduser/sloot.timer"
+  fi
+
+  # Remove binaries from local bin
+  localbin="$HOME/.local/bin"
+  [[ -f "$localbin/sloot" ]] && rm -f -- "$localbin/sloot"
+  [[ -f "$localbin/dms" ]] && rm -f -- "$localbin/dms"
+
+  # Remove explicit_excludes from user config dir
+  USER_CONFIG_DIR="$HOME/.config/sloot"
+  [[ -f "$USER_CONFIG_DIR/explicit_excludes" ]] && rm -f -- "$USER_CONFIG_DIR/explicit_excludes"
+
+  # Remove sudoers drop-in if it matches expected content
+  sudoers_file="/etc/sudoers.d/50-sloot-$USER"
+  if [[ -f "$sudoers_file" ]]; then
+    # Only remove if it contains the expected nopasswd line
+    if grep -qF "$HOME/.local/bin/sloot" "$sudoers_file" 2>/dev/null; then
+      sudo rm -f -- "$sudoers_file" 2>/dev/null || true
+    fi
+  fi
+
+  # Do NOT remove $REPO_DIR per request; leave repo intact
+
+  echo "sloot: remove completed (repo left at $REPO_DIR)"
+}
+
+
+
+install
+
+exit 0
+
+# "$HOME/.local/bin/sloot"
+
+
+# systemctl --user daemon-reload
+# systemctl --user enable sloot.service --now
+# systemctl --user enable sloot.service --now
+# systemctl --user enable sloot.service --now
+# systemctl --user restart sloot.service --now
+# systemctl --user start sloot.service
+# systemctl --user disable sloot.service
+# systemctl --user stop sloot.timer --now
+# systemctl --user disable sloot.timer --now
+# systemctl --user stop sloot.service --now
+# systemctl --user disable sloot.service --now

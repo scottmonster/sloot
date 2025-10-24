@@ -1,0 +1,185 @@
+# =============================================================================
+# EXPLICIT_EXCLUDE LIST for SLOOT - System Level OS Observation Tool
+#
+# Purpose: System-wide exclusions that apply globally regardless of other
+#          configuration files. These are critical safety and performance
+#          exclusions that should always be enforced.
+#
+# Format:  One path per line
+#          - Absolute paths (e.g., /etc/file) for system files
+#          - Relative paths (e.g., ~/.file) for user files
+#          - Variables ($HOME, $REPO_DIR, ~) will be expanded
+#          - Glob patterns supported: *, **, ?, [abc]
+#          - All entries are excludes (no keyword required, but included for clarity)
+#
+# Note:    This file is shipped with SLOOT and should not be modified by users.
+#          User-specific exclusions should go in .exclude or exclude files.
+# =============================================================================
+
+# ---------------------- Repository Self-Protection ---------------------------
+# Prevent infinite recursion by excluding the SLOOT repository itself
+exclude $REPO_DIR/**                          # All repository contents
+exclude $REPO_DIR/user_files/**               # Mirrored user files
+exclude $REPO_DIR/system_files/**             # Mirrored system files
+
+# ---------------------- Editor Temporary Files ---------------------------
+# Exclude backup and swap files created by text editors
+exclude **/*~                                 # Tilde backup suffix
+exclude **/.#*                                # Emacs lockfiles
+exclude **/#*#                                # Emacs autosave files
+exclude **/*.swp                              # Vim swap files
+exclude **/*.swo                              # Vim swap alternate
+exclude **/*.swn                              # Vim swap alternate 2
+exclude **/.*.sw?                             # Vim swap variants
+exclude **/*.bak                              # Generic backup files
+exclude **/*.tmp                              # Temporary files
+exclude **/*.temp                             # Temporary files alt
+exclude **/*.lock                             # Lock files
+exclude **/.DS_Store                          # macOS metadata files
+
+# ---------------------- Version Control Directories ---------------------------
+# Exclude version control system internals
+exclude **/.git                               # Git repository data
+exclude **/.git/**                            # Git repository contents
+exclude **/.svn                               # Subversion repository
+exclude **/.hg                                # Mercurial repository
+exclude **/.bzr                               # Bazaar repository
+exclude ~/.oh-my-zsh/.git                     # Oh-My-Zsh git repo
+
+# ---------------------- Critical Security Exclusions ---------------------------
+# Never track private keys, passwords, or authentication tokens
+exclude ~/.ssh/id_*                           # SSH private keys
+exclude ~/.ssh/*_rsa                          # RSA private keys
+exclude ~/.ssh/*_ed25519                      # Ed25519 private keys
+exclude ~/.ssh/*_ecdsa                        # ECDSA private keys
+exclude ~/.gnupg/private-keys-v1.d            # GPG private keys
+exclude ~/.gnupg/*key*                        # GPG key files
+exclude ~/.gnupg/*.lock                       # GPG lock files
+exclude ~/.gnupg/trustdb.gpg                  # GPG trust database
+exclude ~/.local/share/keyrings               # System keyring secrets
+exclude ~/.password-store                     # Pass password manager
+exclude ~/.config/KeePass*                    # KeePass databases
+exclude ~/.config/Bitwarden                   # Bitwarden vault
+exclude ~/.config/1Password                   # 1Password vault
+exclude ~/.pki                                # TLS certificates
+exclude ~/.aws/credentials                    # AWS credentials
+exclude ~/.config/gcloud/credentials*         # Google Cloud credentials
+exclude ~/.docker/config.json                 # Docker auth tokens
+exclude ~/.kube/config                        # Kubernetes config with creds
+exclude ~/.netrc                              # Network credentials
+exclude /etc/ssh/ssh_host_*                   # SSH host keys
+exclude /etc/ssh/*key                         # SSH key files
+exclude /etc/wireguard/*.key                  # WireGuard private keys
+exclude /etc/wireguard/*.conf                 # WireGuard configs (may have keys)
+exclude /etc/krb5.keytab                      # Kerberos keytab
+
+# ---------------------- Browser Cookies and Passwords ---------------------------
+# Exclude browser cookies, passwords, and session data
+exclude ~/.mozilla/firefox/*/cookies.sqlite   # Firefox cookies
+exclude ~/.mozilla/firefox/*/key*.db          # Firefox key database
+exclude ~/.mozilla/firefox/*/logins.json      # Firefox saved passwords
+exclude ~/.mozilla/firefox/*/sessionstore*    # Firefox sessions
+exclude ~/.config/*/Cookies                   # Generic browser cookies
+exclude ~/.config/*/Login Data                # Generic browser passwords
+exclude ~/.config/*/Web Data                  # Generic browser web data
+
+# ---------------------- Programming Language Build Artifacts ---------------------------
+# Exclude build artifacts and compiled code
+exclude **/__pycache__                        # Python bytecode cache
+exclude **/*.pyc                              # Python compiled files
+exclude **/*.pyo                              # Python optimized files
+exclude **/node_modules                       # Node.js dependencies
+exclude **/.venv                              # Python virtual env
+exclude **/venv                               # Python virtual env
+exclude **/.tox                               # Tox test environments
+exclude **/.cargo/registry                    # Rust cargo registry
+exclude **/.cargo/git                         # Rust cargo git cache
+exclude **/target/debug                       # Rust debug builds
+exclude **/target/release                     # Rust release builds
+exclude **/build                              # Generic build directory
+exclude **/dist                               # Generic dist directory
+
+# ---------------------- IDE and Editor Caches ---------------------------
+# Exclude IDE workspace files and caches
+exclude **/.idea/workspace.xml                # IntelliJ workspace
+exclude **/.idea/tasks.xml                    # IntelliJ tasks
+exclude **/.idea/usage.statistics.xml         # IntelliJ usage stats
+exclude ~/.vscode/extensions                  # VS Code extensions
+exclude ~/.vscode-oss/extensions              # VSCodium extensions
+exclude ~/.local/share/JetBrains              # JetBrains IDE data
+exclude ~/.config/Code/WebStorage            # JetBrains IDE data
+exclude ~/.config/**/*/workspaceStorage          # JetBrains IDE data
+exclude ~/.config/**/*/History          # JetBrains IDE data
+
+# ---------------------- Package Manager Caches ---------------------------
+# Exclude package manager caches and temporary files
+exclude ~/.cache/pip                          # Python pip cache
+exclude ~/.cache/npm                          # Node.js npm cache
+exclude ~/.npm/_cacache                       # NPM cache directory
+exclude ~/.cargo/registry                     # Cargo registry
+exclude ~/.cargo/git                          # Cargo git dependencies
+exclude ~/.m2/repository                      # Maven local repository
+exclude ~/.gradle/caches                      # Gradle caches
+
+# ---------------------- Log Files ---------------------------
+# Exclude log files as they are volatile
+exclude **/*.log                              # Generic log files
+exclude **/*.log.*                            # Rotated log files
+exclude **/logs                               # Log directories
+exclude **/logs/**                            # Log directory contents
+
+# ---------------------- System Volatile Directories ---------------------------
+# Exclude system directories that are volatile
+exclude /dev                                  # Device files
+exclude /dev/**                               # Device file contents
+exclude /proc                                 # Kernel proc filesystem
+exclude /proc/**                              # Proc filesystem contents
+exclude /sys                                  # Kernel sys filesystem
+exclude /sys/**                               # Sys filesystem contents
+exclude /run                                  # Runtime data
+exclude /run/**                               # Runtime data contents
+exclude /tmp                                  # Temporary files
+exclude /tmp/**                               # Temporary file contents
+exclude /var/tmp                              # Var temporary files
+exclude /var/tmp/**                           # Var temp contents
+exclude /var/cache                            # System cache
+exclude /var/cache/**                         # System cache contents
+exclude /var/log                              # System logs
+exclude /var/log/**                           # System log contents
+
+# ---------------------- System Machine-Specific IDs ---------------------------
+# Exclude machine-specific identifiers
+exclude /etc/machine-id                       # Systemd machine ID
+exclude /var/lib/dbus/machine-id              # D-Bus machine ID
+exclude /etc/random-seed                      # Random seed
+exclude /var/lib/systemd/random-seed          # Systemd random seed
+
+# ---------------------- System Large Binary Directories ---------------------------
+# Exclude large directories with binary content
+exclude /boot/*                               # Kernel and initramfs
+exclude /boot/**                              # Boot directory contents
+exclude /usr/src                              # Kernel sources
+exclude /usr/src/**                           # Source tree contents
+exclude /lib/firmware                         # Firmware blobs
+exclude /lib/firmware/**                      # Firmware contents
+exclude /usr/lib/modules                      # Kernel modules
+exclude /usr/lib/modules/**                   # Module contents
+
+# ---------------------- Container and Virtualization Storage ---------------------------
+# Exclude container and VM storage
+exclude /var/lib/docker                       # Docker storage
+exclude /var/lib/docker/**                    # Docker contents
+exclude /var/lib/containers                   # Podman storage
+exclude /var/lib/containers/**                # Podman contents
+exclude ~/.local/share/containers/storage     # User container storage
+exclude ~/.local/share/docker                 # User docker data
+
+# ---------------------- Gaming Platforms ---------------------------
+# Exclude game files due to large size
+exclude ~/.steam                              # Steam directory
+exclude ~/.steam/**                           # Steam contents
+exclude ~/.local/share/Steam/steamapps        # Steam games
+exclude ~/.wine                               # Wine prefix
+exclude ~/.wine/**                            # Wine contents
+
+# End of explicit_exclude

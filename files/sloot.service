@@ -1,0 +1,24 @@
+[Unit]
+Description=SLOOT Service
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=oneshot
+# Option A: two ExecStart lines (run sequentially; stops on first failure)
+# ExecStart=/home/scott/share/qyksys/.qyksys_master/servcies_master/slootd/sloot -n
+# ExecStart=/home/scott/.local/bin/dms
+ExecStart=%h/.local/bin/dms
+
+# Option B: one shell line (same effect; use if you need &&, env, pipes, etc.)
+Environment=HOME=%h
+# ExecStart=/usr/bin/env bash -lc "$HOME/.local/bin/sloot -n && sudo $HOME/.local/bin/sloot -t"
+# ExecStart=/usr/bin/env bash -lc "/home/scott/share/qyksys/.qyksys_master/servcies_master/tmp"
+
+# RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sloot
+
+[Install]
+WantedBy=default.target

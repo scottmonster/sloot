@@ -1,0 +1,14 @@
+[Unit]
+Description=SLOOT Service Timer
+Documentation=https://github.com/scottmonster/sloot
+Requires=sloot.service
+
+[Timer]
+# Run every 1h
+OnBootSec=2min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

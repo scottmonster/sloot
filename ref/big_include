@@ -1,0 +1,425 @@
+# =============================================================================
+# BIG_INCLUDE LIST for SLOOT - System Level OS Observation Tool
+#
+# Purpose: Comprehensive list of configuration files and directories that
+#          should be tracked to capture system and user settings.
+#
+# Format:  One path per line
+#          - Absolute paths (e.g., /etc/file) for system files
+#          - Relative paths (e.g., ~/.file) for user files
+#          - Variables ($HOME, $REPO_DIR, ~) will be expanded
+#          - Glob patterns supported: *, **, ?, [abc]
+#          - Use 'exclude' keyword to exclude subdirectories
+# =============================================================================
+
+# ---------------------- User Shell Configuration ---------------------------
+# Track shell configuration files for bash, zsh, and other shells
+~/.bashrc                                     # Bash interactive config
+~/.bash_profile                               # Bash login profile
+~/.bash_aliases                               # Bash aliases
+~/.bash_logout                                # Bash logout hooks
+~/.bash_completion                            # Bash completion setup
+~/.zshrc                                      # Zsh main configuration
+~/.zshenv                                     # Zsh environment variables
+~/.zprofile                                   # Zsh login profile
+~/.profile                                    # POSIX login profile
+~/.inputrc                                    # Readline configuration
+~/.config/fish                                # Fish shell config directory
+~/.config/nushell                             # Nushell config directory
+~/.local/share/bash-completion/completions    # User bash completions
+~/.oh-my-zsh/custom                           # Oh-My-Zsh custom config
+exclude ~/.oh-my-zsh/.git                     # Exclude git internals
+~/.screenrc                                   # GNU Screen config
+~/.byobu                                      # Byobu terminal config
+
+# ---------------------- User Editor Configuration ---------------------------
+# Track text editor and IDE settings
+~/.vimrc                                      # Vim configuration
+~/.nanorc                                     # Nano configuration
+~/.editorconfig                               # EditorConfig settings
+~/.config/nvim                                # Neovim config directory
+~/.config/helix                               # Helix editor config
+~/.config/micro                               # Micro editor config
+~/.config/sublime-text/Packages/User          # Sublime Text user settings
+exclude ~/.config/sublime-text/Cache          # Exclude cache
+
+# ---------------------- User Git Configuration ---------------------------
+# Track Git version control settings
+~/.gitconfig                                  # Global Git configuration
+~/.gitignore_global                           # Global Git ignore patterns
+~/.config/lazygit                             # Lazygit TUI config
+~/.config/gh/config.yml                       # GitHub CLI config (no tokens)
+
+# ---------------------- User SSH Configuration ---------------------------
+# Track SSH client config (no private keys)
+~/.ssh/config                                 # SSH client configuration
+~/.ssh/known_hosts                            # Known host fingerprints
+~/.ssh/*.pub                                  # Public keys only
+
+# ---------------------- User Terminal Emulators ---------------------------
+# Track terminal emulator configurations
+~/.config/alacritty                           # Alacritty terminal
+~/.config/kitty                               # Kitty terminal
+~/.config/wezterm                             # WezTerm terminal
+
+# ---------------------- User Terminal Multiplexers ---------------------------
+# Track terminal multiplexer configurations
+~/.config/tmux                                # Tmux config directory
+~/.tmux.conf                                  # Tmux main config
+~/.config/screen                              # GNU Screen config
+
+# ---------------------- User CLI Tools ---------------------------
+# Track command-line tool configurations
+~/.config/htop                                # Htop process viewer
+~/.config/btop                                # Btop system monitor
+~/.config/bottom                              # Bottom system monitor
+~/.config/starship.toml                       # Starship prompt
+~/.config/bat                                 # Bat pager config
+~/.config/ripgrep                             # Ripgrep search config
+~/.config/fd                                  # Fd find config
+~/.config/direnv                              # Direnv config
+~/.config/atuin/config.toml                   # Atuin shell history
+~/.curlrc                                     # Curl defaults
+~/.wgetrc                                     # Wget defaults
+~/.config/neofetch                            # Neofetch system info
+~/.config/fastfetch                           # Fastfetch system info
+
+# ---------------------- User File Managers ---------------------------
+# Track file manager configurations
+~/.config/ranger                              # Ranger file manager
+~/.config/lf                                  # Lf file manager
+~/.config/nnn                                 # Nnn file manager
+~/.config/yazi                                # Yazi file manager
+
+# ---------------------- User Media Players ---------------------------
+# Track media player configurations
+~/.config/mpv                                 # MPV media player
+~/.config/vlc                                 # VLC media player
+~/.config/yt-dlp                              # Yt-dlp downloader
+~/.config/youtube-dl                          # Youtube-dl downloader
+
+# ---------------------- User Development Tools ---------------------------
+# Track development environment configurations
+~/.config/Code/User                           # VS Code settings
+exclude ~/.config/Code/Cache                  # Exclude cache
+exclude ~/.config/Code/CachedData             # Exclude cached data
+exclude ~/.config/Code/logs                   # Exclude logs
+~/.config/VSCodium/User                       # VSCodium settings
+exclude ~/.config/VSCodium/Cache              # Exclude cache
+exclude ~/.config/VSCodium/CachedData         # Exclude cached data
+exclude ~/.config/VSCodium/logs               # Exclude logs
+
+# ---------------------- User Package Manager Configuration ---------------------------
+# Track user-level package manager settings
+~/.config/pip                                 # Pip config directory
+~/.config/pip/pip.conf                        # Pip main config
+~/.config/npm                                 # NPM config directory
+~/.npmrc                                      # NPM configuration
+~/.cargo/config.toml                          # Rust Cargo config
+~/.condarc                                    # Conda configuration
+
+# ---------------------- User Cloud CLI Configuration ---------------------------
+# Track cloud provider CLI configs (no credentials)
+~/.aws/config                                 # AWS CLI config (no creds)
+~/.config/gcloud/configurations               # GCloud configurations
+
+# ---------------------- User Infrastructure as Code ---------------------------
+# Track IaC tool configurations
+~/.terraformrc                                # Terraform config
+~/.config/ansible                             # Ansible config directory
+exclude ~/.ansible/tmp                        # Exclude temp files
+
+# ---------------------- User Container Tools ---------------------------
+# Track container tool configurations
+~/.config/containers/containers.conf          # Podman containers config
+~/.config/containers/storage.conf             # Podman storage config
+exclude ~/.config/containers/auth.json        # Exclude auth tokens
+~/.config/lazydocker                          # Lazydocker TUI config
+~/.vagrant.d/Vagrantfile                      # Vagrant global config
+
+# ---------------------- User Database Clients ---------------------------
+# Track database client configurations
+~/.config/psql/psqlrc                         # PostgreSQL client config
+~/.pgpass                                     # PostgreSQL password file
+~/.my.cnf                                     # MySQL client config
+~/.sqliterc                                   # SQLite client config
+
+# ---------------------- User Browser Settings ---------------------------
+# Track browser preferences (no cookies or passwords)
+~/.mozilla/firefox/*.default-release/user.js  # Firefox user preferences
+~/.mozilla/firefox/*.default-release/prefs.js # Firefox preferences
+~/.config/BraveSoftware/Brave-Browser/Default/Preferences  # Brave preferences
+~/.config/google-chrome/Default/Preferences   # Chrome preferences
+
+# ---------------------- User Flatpak Configuration ---------------------------
+# Track Flatpak application overrides and settings
+~/.var/app                                    # Flatpak app settings
+exclude ~/.var/app/*/cache                    # Exclude cache
+exclude ~/.var/app/*/data/Cache               # Exclude data cache
+exclude ~/.var/app/*/data/cache               # Exclude data cache
+~/.local/share/flatpak/overrides              # User Flatpak overrides
+
+# ---------------------- User Fonts and Theming ---------------------------
+# Track fonts and theme customizations
+~/.config/fontconfig                          # Fontconfig directory
+~/.config/fontconfig/fonts.conf               # Fontconfig main file
+~/.local/share/fonts                          # Custom user fonts
+~/.config/gtk-3.0/settings.ini                # GTK3 theme settings
+~/.config/gtk-4.0/settings.ini                # GTK4 theme settings
+~/.config/qt5ct/qt5ct.conf                    # Qt5 theme config
+~/.config/qt6ct/qt6ct.conf                    # Qt6 theme config
+~/.gtkrc-2.0                                  # GTK2 config
+
+# ---------------------- User Desktop Entries and MIME ---------------------------
+# Track custom desktop entries and file associations
+~/.config/mimeapps.list                       # Default application associations
+~/.local/share/applications                   # Custom .desktop files
+~/.local/share/icons                          # Custom user icons
+~/.local/share/mime                           # Custom MIME types
+
+# ---------------------- User X11 Configuration ---------------------------
+# Track X11 session and display settings
+~/.Xresources                                 # X11 resources
+~/.Xdefaults                                  # X11 defaults
+~/.xinitrc                                    # X11 init script
+~/.xprofile                                   # X11 profile script
+~/.xsession                                   # X11 session script
+
+# ---------------------- User Window Managers ---------------------------
+# Track window manager configurations
+~/.config/i3                                  # i3 window manager
+~/.config/sway                                # Sway compositor
+~/.config/hypr                                # Hyprland compositor
+~/.config/awesome                             # AwesomeWM
+
+# ---------------------- User Status Bars and Panels ---------------------------
+# Track status bar and panel configurations
+~/.config/waybar                              # Waybar (Wayland)
+~/.config/polybar                             # Polybar (X11)
+
+# ---------------------- User Notification Daemons ---------------------------
+# Track notification daemon configurations
+~/.config/dunst                               # Dunst notifications
+~/.config/mako                                # Mako notifications
+
+# ---------------------- User Application Launchers ---------------------------
+# Track application launcher configurations
+~/.config/rofi                                # Rofi launcher (X11)
+~/.config/wofi                                # Wofi launcher (Wayland)
+
+# ---------------------- User Compositors ---------------------------
+# Track compositor configurations
+~/.config/picom                               # Picom compositor
+
+# ---------------------- User Desktop Environments ---------------------------
+# Track desktop environment configurations (non-dconf)
+~/.config/plasma-workspace                    # KDE Plasma workspace
+~/.config/kwinrc                              # KDE window manager
+~/.config/kglobalshortcutsrc                  # KDE global shortcuts
+~/.config/xfce4                               # XFCE4 settings
+~/.config/lxde                                # LXDE settings
+~/.config/lxqt                                # LXQt settings
+
+# ---------------------- User AppImages ---------------------------
+# Track curated AppImage applications
+$HOME/Applications                            # AppImage directory
+exclude $HOME/Applications/*/Cache            # Exclude app caches
+exclude $HOME/Applications/*/cache            # Exclude app caches
+
+# ---------------------- User Custom Scripts ---------------------------
+# Track user script directories (uncomment if used)
+~/bin                                         # User scripts in home
+~/.local/bin                                  # User local scripts
+
+# ---------------------- User GnuPG Configuration ---------------------------
+# Track GPG configuration (no private keys)
+~/.gnupg/gpg.conf                             # GPG config file
+~/.gnupg/dirmngr.conf                         # GPG dirmngr config
+
+# ---------------------- System Boot Configuration ---------------------------
+# Track bootloader and kernel parameters
+/etc/default/grub                             # GRUB bootloader defaults
+/etc/sysctl.conf                              # Kernel sysctl parameters
+/etc/sysctl.d                                 # Sysctl drop-in configs
+
+# ---------------------- System Network Configuration ---------------------------
+# Track network configuration files
+/etc/hosts                                    # Static host-to-IP mappings
+/etc/hostname                                 # System hostname
+/etc/resolv.conf                              # DNS resolver config
+/etc/NetworkManager                           # NetworkManager configs
+exclude /etc/NetworkManager/system-connections/*.nmconnection  # Exclude connection secrets
+exclude /etc/NetworkManager/system-connections/*tmp*  # Exclude temp files
+
+# ---------------------- System SSH Configuration ---------------------------
+# Track SSH server configuration
+/etc/ssh/sshd_config                          # SSH server config
+/etc/ssh/ssh_config                           # SSH client config
+exclude /etc/ssh/ssh_host_*                   # Exclude host keys
+
+# ---------------------- System Time and Locale ---------------------------
+# Track timezone and locale settings
+/etc/timezone                                 # System timezone
+/etc/locale.gen                               # Locale generation list
+/etc/locale.conf                              # Locale configuration
+/etc/localtime                                # Timezone symlink/file
+/etc/vconsole.conf                            # Virtual console config
+
+# ---------------------- System User and Group Management ---------------------------
+# Track user and group configuration (be cautious with passwords)
+/etc/passwd                                   # User account information
+/etc/group                                    # Group information
+/etc/shadow                                   # User password hashes
+/etc/gshadow                                  # Group password hashes
+/etc/sudoers                                  # Sudo configuration
+/etc/sudoers.d                                # Sudo drop-in configs
+
+# ---------------------- System Package Manager (Debian/Ubuntu) ---------------------------
+# Track APT and DPKG configuration
+/etc/apt/sources.list                         # APT package sources
+/etc/apt/sources.list.d                       # Additional APT sources
+exclude /etc/apt/sources.list.d/*.save        # Exclude backup files
+/etc/apt/preferences                          # APT pinning preferences
+/etc/apt/preferences.d                        # APT pinning drop-ins
+/etc/dpkg/dpkg.cfg                            # DPKG configuration
+/etc/dpkg/dpkg.cfg.d                          # DPKG drop-in configs
+
+# ---------------------- System Package Manager (RPM-based) ---------------------------
+# Track DNF/YUM configuration
+/etc/dnf/dnf.conf                             # DNF package manager config
+/etc/yum.repos.d                              # YUM/DNF repository configs
+/etc/sysconfig                                # System configuration area
+
+# ---------------------- System Package Manager (Arch) ---------------------------
+# Track Pacman configuration
+/etc/pacman.conf                              # Pacman configuration
+/etc/pacman.d                                 # Pacman mirrorlist and hooks
+exclude /etc/pacman.d/gnupg                   # Exclude keyring state
+
+# ---------------------- System Systemd Configuration ---------------------------
+# Track systemd units and configurations
+/etc/systemd                                  # Systemd configuration
+exclude /etc/systemd/system/*.wants           # Exclude generated symlinks
+exclude /etc/systemd/user/*.wants             # Exclude generated symlinks
+exclude /etc/systemd/system/*.requires        # Exclude generated symlinks
+exclude /etc/systemd/user/*.requires          # Exclude generated symlinks
+exclude /etc/systemd/system/*.preset          # Exclude generated symlinks
+
+# ---------------------- System Hardware Configuration ---------------------------
+# Track hardware-related configurations
+/etc/udev/rules.d                             # Udev rules
+/etc/modprobe.d                               # Kernel module options
+/etc/X11                                      # X11 configuration
+/etc/alternatives                             # Alternatives system
+
+# ---------------------- System Shell Environment ---------------------------
+# Track system-wide shell configuration
+/etc/environment                              # Global environment variables
+/etc/profile                                  # Global login profile
+/etc/profile.d                                # Profile drop-in scripts
+/etc/bash.bashrc                              # Global bash config
+/etc/zsh/zshenv                               # Global zsh environment
+/etc/zsh/zshrc                                # Global zsh config
+/etc/zsh/zprofile                             # Global zsh profile
+
+# ---------------------- System Authentication and Security ---------------------------
+# Track PAM and security configuration
+/etc/pam.d                                    # PAM authentication modules
+/etc/security/limits.conf                     # Resource limits config
+/etc/security/limits.d                        # Resource limits drop-ins
+/etc/apparmor                                 # AppArmor security profiles
+/etc/apparmor.d                               # AppArmor profile directory
+/etc/selinux                                  # SELinux configuration
+/etc/polkit-1                                 # PolicyKit configuration
+/etc/fail2ban                                 # Fail2ban intrusion prevention
+
+# ---------------------- System Container Configuration ---------------------------
+# Track container daemon configurations
+/etc/docker/daemon.json                       # Docker daemon config
+/etc/containers/registries.conf               # Podman registries
+/etc/containers/policy.json                   # Podman image policy
+/etc/containers/storage.conf                  # Podman storage config
+
+# ---------------------- System Printing Configuration ---------------------------
+# Track printing system configuration
+/etc/cups/cupsd.conf                          # CUPS daemon config
+/etc/cups/printers.conf                       # CUPS printer definitions
+exclude /etc/cups/certs                       # Exclude certificates
+exclude /etc/cups/ssl                         # Exclude SSL materials
+
+# ---------------------- System Audio Configuration ---------------------------
+# Track audio system configuration
+/etc/pulse                                    # PulseAudio configuration
+/etc/alsa                                     # ALSA configuration
+/etc/pipewire                                 # PipeWire configuration
+
+# ---------------------- System Logging Configuration ---------------------------
+# Track system logging configuration
+/etc/rsyslog.conf                             # Rsyslog main config
+/etc/rsyslog.d                                # Rsyslog drop-in configs
+/etc/logrotate.conf                           # Log rotation main config
+/etc/logrotate.d                              # Log rotation rules
+
+# ---------------------- System Cron and Scheduled Tasks ---------------------------
+# Track cron and scheduled task configuration
+/etc/crontab                                  # System crontab
+/etc/cron.d                                   # Cron job drop-ins
+/etc/cron.daily                               # Daily cron scripts
+/etc/cron.weekly                              # Weekly cron scripts
+/etc/cron.monthly                             # Monthly cron scripts
+/var/spool/cron/crontabs                      # Per-user crontabs
+exclude /var/spool/cron/crontabs/root         # Exclude root crontab
+/etc/anacrontab                               # Anacron config
+/etc/at.deny                                  # AT job deny list
+/etc/cron.deny                                # Cron deny list
+
+# ---------------------- System Firewall Configuration ---------------------------
+# Track firewall configurations
+/etc/iptables                                 # Iptables rules directory
+/etc/nftables.conf                            # Nftables configuration
+/etc/ufw                                      # UFW firewall config
+/etc/firewalld                                # Firewalld configuration
+
+# ---------------------- System Display Manager Configuration ---------------------------
+# Track display manager configurations
+/etc/lightdm                                  # LightDM display manager
+/etc/gdm3                                     # GDM display manager
+/etc/sddm.conf                                # SDDM main config
+/etc/sddm.conf.d                              # SDDM drop-in configs
+
+# ---------------------- System Filesystem Configuration ---------------------------
+# Track filesystem and mount configuration
+/etc/fstab                                    # Filesystem table
+/etc/crypttab                                 # Encrypted filesystem table
+
+# ---------------------- System Flatpak Configuration ---------------------------
+# Track system-wide Flatpak overrides
+/var/lib/flatpak/overrides                    # System Flatpak overrides
+
+# ---------------------- System Snap Configuration ---------------------------
+# Track Snap seed metadata
+/var/lib/snapd/seed                           # Snap seed metadata
+
+# ---------------------- System Banners and Name Service ---------------------------
+# Track system banners and name service configuration
+/etc/issue                                    # Local login banner
+/etc/issue.net                                # Remote login banner
+/etc/nsswitch.conf                            # Name service switch
+/etc/ld.so.conf                               # Dynamic linker config
+/etc/ld.so.conf.d                             # Dynamic linker drop-ins
+
+# ---------------------- System Samba Configuration ---------------------------
+# Track Samba file sharing configuration
+/etc/samba/smb.conf                           # Samba server config
+
+# ---------------------- System Virtualization Configuration ---------------------------
+# Track virtualization tool configurations
+/etc/libvirt                                  # Libvirt virtualization
+/etc/qemu                                     # QEMU configuration
+
+# ---------------------- System Database Configuration ---------------------------
+# Track database server configurations (no data)
+/etc/postgresql                               # PostgreSQL server configs
+/etc/mysql                                    # MySQL/MariaDB configs
+
+# End of big_include

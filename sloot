@@ -1,0 +1,2669 @@
+#!/usr/bin/env bash
+
+# sloot.sh - System Level OS Observation Tool
+#
+# Purpose: Monitor and track changes to system configuration
+
+
+declare -gr REPO_DIR="${SLOOT_DIR:-$HOME/sloot}"
+# declare -gr REPO_DIR="/home/scott/share/qyksys/.qyksys_master/servcies_master/tmp"
+declare -gr LOG_DIR="$REPO_DIR/logs"
+mkdir -p "$LOG_DIR"
+
+declare -g LOG_FILE="$LOG_DIR/000_sloot.log"
+touch "$LOG_FILE" 2>/dev/null || true
+
+MAX_LOGS=5
+declare -g THREAD_PERCENTAGE=100
+declare -g MAX_TASK_THREADS=20
+
+rotate_logs() {
+
+  # Requires: LOG_FILE set to current "000_<name>.log"
+  if [[ -z "${LOG_FILE:-}" ]]; then
+    echo "rotate_logs: LOG_FILE is not set" >&2
+    return 1
+  fi
+
+  if [[ ! -f "$LOG_FILE" ]]; then
+    echo "rotate_logs: no need to rotate logs" >&2
+    return 0
+  fi
+
+  local fname base
+  fname="$(basename -- "$LOG_FILE")"
+
+  # Accept either "000_<name>.log" or "<name>.log" (we'll normalize to 000_)
+  if [[ "$fname" =~ ^[0-9]{3}_(.+)$ ]]; then
+    base="${BASH_REMATCH[1]}"
+  else
+    base="$fname"
+  fi
+
+  # Prune the oldest first (MAX_LOGS-1 -> deleted), then shift downwards
+  local i old new
+  for (( i=MAX_LOGS-1; i>=0; i-- )); do
+    old="$(printf "%s/%03d_%s" "$LOG_DIR" "$i" "$base")"
+    if (( i == MAX_LOGS-1 )); then
+      [[ -e "$old" ]] && rm -f -- "$old" || echo "rotate_logs: could not remove old logfile $old"
+    else
+      new="$(printf "%s/%03d_%s" "$LOG_DIR" "$((i+1))" "$base")"
+      if [[ -e "$old" ]]; then
+        
+        mv -- "$old" "$new" || echo "rotate_logs: problem performing - mv $old $new"
+      fi
+    fi
+  done
+
+  # Create/truncate the fresh newest log: 000_<base>
+  LOG_FILE="$(printf "%s/%03d_%s" "$LOG_DIR" 0 "$base")"
+  $VERBOSE && 
+  : > "$LOG_FILE" || echo "rotate_logs: problem at: > $LOG_FILE"
+
+}
+
+rotate_logs
+
+log(){
+  local timestamp="[$(date '+%Y-%m-%d %H:%M:%S')]"
+  local message="$timestamp $*"
+  
+  # Always log to file if LOG_FILE is set and parent dir exists
+  if [[ -n "${LOG_FILE:-}" ]]; then
+    local log_dir="$(dirname "$LOG_FILE")"
+    if [[ -d "$log_dir" ]] || mkdir -p "$log_dir" 2>/dev/null; then
+      echo "$message" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+  fi
+  
+  if [[ "$VERBOSE" == true ]]; then
+    echo "$message" >&2
+  fi
+}
+
+error(){
+  local timestamp="[$(date '+%Y-%m-%d %H:%M:%S')]"
+  local message="$timestamp ERROR: $*"
+  
+  # Log to file
+  if [[ -n "${LOG_FILE:-}" ]]; then
+    local log_dir="$(dirname "$LOG_FILE")"
+    if [[ -d "$log_dir" ]] || mkdir -p "$log_dir" 2>/dev/null; then
+      echo "$message" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+  fi
+  
+  echo "Error: $*" >&2
+}
+
+warn(){
+  local timestamp="[$(date '+%Y-%m-%d %H:%M:%S')]"
+  local message="$timestamp WARNING: $*"
+  
+  # Log to file
+  if [[ -n "${LOG_FILE:-}" ]]; then
+    local log_dir="$(dirname "$LOG_FILE")"
+    if [[ -d "$log_dir" ]] || mkdir -p "$log_dir" 2>/dev/null; then
+      echo "$message" >> "$LOG_FILE" 2>/dev/null || true
+    fi
+  fi
+  
+  if [[ "$VERBOSE" == true ]]; then
+    echo "Warning: $*" >&2
+  fi
+}
+
+VERBOSE=true
+ACTUAL_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYSTEM_CONFIG_DIR=/etc/sloot
+USER_CONFIG_DIR="$HOME/.config/sloot"
+
+
+
+determine_user(){
+  local detected_user=""
+  
+  # Method 1: SUDO_USER (when run with sudo)
+  if [[ -n "${SUDO_USER:-}" ]] && [[ "$SUDO_USER" != "root" ]]; then
+    detected_user="$SUDO_USER"
+    echo "$detected_user"
+    return 0
+  fi
+  
+  # Method 2: Check who owns the systemd user session
+  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    detected_user=$(stat -c '%U' "$XDG_RUNTIME_DIR" 2>/dev/null)
+    if [[ -n "$detected_user" ]] && [[ "$detected_user" != "root" ]]; then
+      log "Detected user via XDG_RUNTIME_DIR owner: $detected_user"
+      echo "$detected_user"
+      return 0
+    fi
+  fi
+  
+  # Method 3: Find user with active graphical session
+  if command -v loginctl &>/dev/null; then
+    detected_user=$(loginctl list-sessions --no-legend | awk '$3 != "root" && $5 ~ /(seat0|tty7|:0)/ {print $3; exit}')
+    if [[ -n "$detected_user" ]]; then
+      log "Detected user via loginctl session: $detected_user"
+      echo "$detected_user"
+      return 0
+    fi
+  fi
+  
+  # Method 4: Check process tree for Xorg/Wayland owner
+  for display_proc in Xorg Xwayland gnome-shell; do
+    detected_user=$(ps aux | grep "/$display_proc" | grep -v grep | awk 'NR==1 {print $1}')
+    if [[ -n "$detected_user" ]] && [[ "$detected_user" != "root" ]]; then
+      log "Detected user via $display_proc process owner: $detected_user"
+      echo "$detected_user"
+      return 0
+    fi
+  done
+  
+  # Method 5: logname (works in interactive sessions)
+  detected_user=$(logname 2>/dev/null)
+  if [[ -n "$detected_user" ]] && [[ "$detected_user" != "root" ]]; then
+    log "Detected user via logname: $detected_user"
+    echo "$detected_user"
+    return 0
+  fi
+  
+  # Method 6: whoami fallback
+  detected_user=$(whoami)
+  log "Falling back to whoami: $detected_user"
+  echo "$detected_user"
+}
+# this will set user and home to the actual user and not root
+# used for setting permissions
+user="$(determine_user)"
+home=$(getent passwd "$user" | cut -d: -f6)
+
+
+# Sub directories
+DCONF_DIR="$REPO_DIR/dconfs"
+GSETTINGS_DIR="$REPO_DIR/gsettings"
+PKG_APPS_DIR="$REPO_DIR/pkg_apps"
+CRON_DIR="$REPO_DIR/cron"
+PYTHON_DIR="$REPO_DIR/python"
+SYSTEMD_DIR="$REPO_DIR/systemd"
+DOCKER_DIR="$REPO_DIR/docker" # returns if docker not availabl e
+KERNEL_DIR="$REPO_DIR/kernel" # returns if docker not availabl e
+NETWORK_DIR="$REPO_DIR/network" # shuold always have something to create
+VIRSH_DIR="$REPO_DIR/virsh" # returns if virsh not available
+PODMAN_DIR="$REPO_DIR/podman" # returns if podman not available
+FONTS_THEME_DIR="$REPO_DIR/fonts_theme" # should always have something to create
+GNOME_EXTENSIONS_DIR="$REPO_DIR/gnome_extensions" # returns if not gnome-shell
+
+
+# tracking files
+FILES_DIR="$REPO_DIR/files"
+FILE_INCLUDES=()
+FILE_EXCLUDES=()
+PERMISSION_FILE="$REPO_DIR/perms.txt"
+
+# command line args
+COMMIT_MESSAGE=""
+INIT_COMMIT_MESSAGE="Initial commit"
+FIRST_RUN_MESSAGE="First run"
+# this is just a fancy markdown file... it gets added to the .gitignore you should change that if you want it to be part of the repo
+CHANGE_LOG="$REPO_DIR/changelog.md"
+
+SKIP_GSETTINGS=""
+NO_COMMIT=""
+
+
+# ============================================================================
+# ONLY USER DUMPS
+# ============================================================================
+
+dump_pkg_apps(){
+
+
+  dump_packages(){
+    log "Dumping package information"
+    local outdir="$PKG_APPS_DIR"
+    local tmpdir
+    tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+    trap 'rm -rf -- "$tmpdir"' RETURN
+
+    if command -v apt-mark &>/dev/null; then
+      local f_manual="$tmpdir/apt_manual.txt"
+      local f_auto="$tmpdir/apt_auto.txt"
+      local f_versions="$tmpdir/apt_versions.txt"
+
+      apt-mark showmanual 2>/dev/null | sort > "$f_manual" || warn "apt-mark showmanual failed"
+      apt-mark showauto   2>/dev/null | sort > "$f_auto"   || warn "apt-mark showauto failed"
+      dpkg-query -W -f='${Package}\t${Version}\n' 2>/dev/null | sort > "$f_versions" || warn "dpkg-query failed"
+
+      # Move only non-empty files and create outdir only if needed
+      for f in "$f_manual" "$f_auto" "$f_versions"; do
+        if [[ -s "$f" ]]; then
+          [[ -d "$outdir" ]] || mkdir -p "$outdir"
+          mv -- "$f" "$outdir/$(basename "$f")" || warn "Failed to move $(basename "$f")"
+        fi
+      done
+    else
+      log "apt-mark not available, skipping package dump"
+    fi
+  }
+  
+  dump_flatpak(){
+    if ! command -v flatpak &>/dev/null; then
+      log "flatpak not available"
+      return
+    fi
+
+    log "Dumping Flatpak applications"
+    local outdir="$PKG_APPS_DIR"
+    local tmpfile
+    tmpfile=$(mktemp) || { warn "mktemp failed"; return 1; }
+    trap 'rm -f -- "$tmpfile"' RETURN
+
+    {
+      echo "# System Flatpaks"
+      flatpak list --system --app --columns=application,version,branch,origin 2>/dev/null || true
+      echo ""
+      echo "# User Flatpaks"
+      flatpak list --user --app --columns=application,version,branch,origin 2>/dev/null || true
+    } > "$tmpfile" 2>&1 || { warn "flatpak list failed"; return 1; }
+
+    if [[ -s "$tmpfile" && "$(grep -v '^[[:space:]]*$' "$tmpfile" | wc -c)" -gt 0 ]]; then
+      [[ -d "$outdir" ]] || mkdir -p "$outdir"
+      mv -- "$tmpfile" "$outdir/flatpak_list.txt" || warn "Failed to move flatpak_list.txt"
+    fi
+  }
+
+  dump_gearlever(){
+    if ! command -v gearlever &>/dev/null; then
+      log "gearlever not available"
+      return
+    fi
+
+    log "Dumping GearLever AppImages"
+    local outdir="$PKG_APPS_DIR"
+    local tmpfile
+    tmpfile=$(mktemp) || { warn "mktemp failed"; return 1; }
+    trap 'rm -f -- "$tmpfile"' RETURN
+
+    gearlever --list 2>/dev/null > "$tmpfile" || warn "gearlever --list failed"
+    
+    if [[ -s "$tmpfile" ]]; then
+      [[ -d "$outdir" ]] || mkdir -p "$outdir"
+      mv -- "$tmpfile" "$outdir/gearlever_list.txt" || warn "Failed to move gearlever_list.txt"
+    fi
+  }
+
+  dump_desktop_files(){
+    log "Dumping application names"
+    local outdir="$PKG_APPS_DIR"
+    local temp_file
+    temp_file=$(mktemp) || { warn "mktemp failed"; return 1; }
+    trap 'rm -f -- "$temp_file"' RETURN
+    
+    local found_files=0
+
+    # Check each directory and only process if it exists and has .desktop files
+    local -a desktop_dirs=(
+      "/usr/share/applications"
+      "$HOME/.local/share/applications"
+      "/var/lib/flatpak/exports/share/applications"
+      "$HOME/.local/share/flatpak/exports/share/applications"
+    )
+
+    {
+      for dir in "${desktop_dirs[@]}"; do
+        if [[ -d "$dir" ]]; then
+          # Use nullglob style check
+          shopt -s nullglob
+          local desktop_files=("$dir"/*.desktop)
+          shopt -u nullglob
+          if [[ -f "${desktop_files[0]:-}" ]]; then
+            grep -h '^Name=' "${desktop_files[@]}" 2>/dev/null | cut -d= -f2- || true
+            ((found_files++))
+          fi
+        fi
+      done
+    } | sort -u > "$temp_file" 2>&1
+
+    if [[ $found_files -gt 0 && -s "$temp_file" ]]; then
+      [[ -d "$outdir" ]] || mkdir -p "$outdir"
+      mv -- "$temp_file" "$outdir/DOTdesktop_files.txt" || warn "Failed to move DOTdesktop_files.txt"
+      log "App names dump complete ($(wc -l < "$outdir/DOTdesktop_files.txt" 2>/dev/null || echo 0) apps from $found_files directories)"
+    else
+      log "No desktop files found or accessible"
+    fi
+  }
+
+  dump_packages
+  dump_flatpak
+  dump_gearlever
+  dump_desktop_files
+}
+
+dump_python(){
+  log "Dumping Python packages"
+  local outdir="$PYTHON_DIR"
+  local tmpdir
+  tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+  trap 'rm -rf -- "$tmpdir"' RETURN
+
+  # System python
+  for py in python3 python; do
+    if command -v "$py" &>/dev/null; then
+      "$py" -m pip list --format=freeze 2>/dev/null | sort > "$tmpdir/${py}_system.txt" || warn "$py pip list failed"
+    fi
+  done
+
+  # User packages (python3 only - best effort)
+  if command -v python3 &>/dev/null; then
+    python3 -m pip list --user --format=freeze 2>/dev/null | sort > "$tmpdir/python3_user.txt" || true
+  fi
+
+  # pipx
+  if command -v pipx &>/dev/null; then
+    pipx list 2>/dev/null > "$tmpdir/pipx_list.txt" || warn "pipx list failed"
+  fi
+
+  # Find virtualenvs
+  find "${home:-$HOME}" -maxdepth 3 -type d \( -name 'venv' -o -name '.venv' \) -print 2>/dev/null \
+    | sort -u > "$tmpdir/virtualenv_paths.txt" || true
+
+  # Move only non-empty files, create outdir only if needed
+  for f in "$tmpdir"/*; do
+    [[ -f "$f" && -s "$f" ]] || continue
+    [[ -d "$outdir" ]] || mkdir -p "$outdir"
+    mv -- "$f" "$outdir/$(basename "$f")" || warn "Failed to move $(basename "$f")"
+  done
+}
+
+dump_fonts_icons_themes(){
+  log "Dumping fonts, icons, themes"
+  local outdir="$FONTS_THEME_DIR"
+  local tmpdir
+  tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+  trap 'rm -rf -- "$tmpdir"' RETURN
+
+  # Fonts
+  if command -v fc-list &>/dev/null; then
+    fc-list 2>/dev/null | sort > "$tmpdir/fc-list.txt" || warn "fc-list failed"
+    if [[ -s "$tmpdir/fc-list.txt" ]]; then
+      [[ -d "$outdir/fonts" ]] || mkdir -p "$outdir/fonts"
+      mv -- "$tmpdir/fc-list.txt" "$outdir/fonts/fc-list.txt" || warn "Failed to move fc-list.txt"
+    fi
+  fi
+
+  # Current GTK/icon theme from gsettings
+  if command -v gsettings &>/dev/null; then
+    {
+      echo "gtk-theme: $(gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null || echo 'unknown')"
+      echo "icon-theme: $(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null || echo 'unknown')"
+      echo "cursor-theme: $(gsettings get org.gnome.desktop.interface cursor-theme 2>/dev/null || echo 'unknown')"
+    } > "$tmpdir/current_theme.txt" 2>/dev/null || warn "gsettings theme query failed"
+
+    if [[ -s "$tmpdir/current_theme.txt" ]]; then
+      [[ -d "$outdir" ]] || mkdir -p "$outdir"
+      mv -- "$tmpdir/current_theme.txt" "$outdir/current_theme.txt" || warn "Failed to move current_theme.txt"
+    fi
+  fi
+}
+
+dump_gnome_extensions(){
+  if ! command -v gnome-shell &>/dev/null; then
+    log "gnome-shell not available"
+    return
+  fi
+
+  log "Dumping GNOME extensions"
+  local outdir="$GNOME_EXTENSIONS_DIR"
+  local tmpdir
+  tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+  trap 'rm -rf -- "$tmpdir"' RETURN
+
+  gnome-shell --version 2>/dev/null > "$tmpdir/shell_version.txt" || warn "gnome-shell --version failed"
+  
+  if command -v gnome-extensions &>/dev/null; then
+    gnome-extensions list --enabled 2>/dev/null | sort > "$tmpdir/enabled.txt" || warn "gnome-extensions list --enabled failed"
+    gnome-extensions list --disabled 2>/dev/null | sort > "$tmpdir/disabled.txt" || warn "gnome-extensions list --disabled failed"
+  else
+    log "gnome-extensions command not available"
+  fi
+
+  # Move only non-empty files and create outdir only if needed
+  for f in "$tmpdir"/*; do
+    [[ -f "$f" && -s "$f" ]] || continue
+    [[ -d "$outdir" ]] || mkdir -p "$outdir"
+    mv -- "$f" "$outdir/$(basename "$f")" || warn "Failed to move $(basename "$f")"
+  done
+}
+
+# ============================================================================
+# USER AND SUDO DUMPS
+# ============================================================================
+
+dump_gsettingsv1(){
+  log "Dumping GSettings to $GSETTINGS_DIR"
+  local outfile
+  local non_reloc_header="---NON_RELOC---"
+  local reloc_header="---RELOC---"
+
+  if [[ $EUID -eq 0 ]]; then
+    outfile="$GSETTINGS_DIR/sudo"
+  else
+    outfile="$GSETTINGS_DIR/user"
+  fi
+
+  # Create temp directory for parallel processing
+  local tmpdir
+  tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+  # trap 'rm -rf -- "$tmpdir"' RETURN
+  # # for TESTING ONLY
+  # tmpdir=stest
+  # [[ -d $tmpdir ]] && rm -rf $tmpdir
+  # mkdir -p $tmpdir
+
+
+  # Calculate thread allocation
+  calculate_thread_allocation(){
+    local total_cores
+    total_cores=$(nproc)
+    
+    local desired_total=1
+    local available
+    available=$(awk "BEGIN {printf \"%.0f\", $total_cores * $desired_total}")
+    
+    local non_reloc_ratio=0.12
+    NON_RELOC_THREADS=$(awk "BEGIN {val = $available * $non_reloc_ratio; val = (val < 1) ? 1 : int(val + 0.5); print val}")
+    
+    RELOC_THREADS=$((available - NON_RELOC_THREADS))
+    [[ $RELOC_THREADS -lt 1 ]] && RELOC_THREADS=1
+    
+    log "Using $NON_RELOC_THREADS threads for non-relocatable schemas"
+    log "Using $RELOC_THREADS threads for relocatable schemas"
+  }
+
+  # Function to process a list of schemas (non-relocatable)
+  dump_non_reloc(){
+    local schema_file="$1"
+    local output_file="$2"
+    
+    local -a schemas
+    mapfile -t schemas < "$schema_file"
+    
+    for s in "${schemas[@]}"; do
+      [[ -z "$s" ]] && continue
+      gsettings list-recursively "$s" 2>/dev/null || true
+    done | while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      
+      schema=${line%% *}
+      rest=${line#* }
+      key=${rest%% *}
+      value=${rest#* }
+      [[ "$value" == "$rest" ]] && value=""
+      
+      printf 'SCHEMA:%s PATH:/ KEY:%s VALUE:%s\n' "$schema" "$key" "$value"
+    done > "$output_file"
+  }
+
+  # Function to process relocatable schemas with paths
+  dump_reloc(){
+    local paths_file="$1"
+    local schema_file="$2"
+    local output_file="$3"
+    
+    local -a paths
+    mapfile -t paths < "$paths_file"
+    
+    local -a rel_schemas
+    mapfile -t rel_schemas < "$schema_file"
+    
+    for schema in "${rel_schemas[@]}"; do
+      [[ -z "$schema" ]] && continue
+      
+      for p in "${paths[@]}"; do
+        [[ -z "$p" ]] && continue
+        
+        local -a keys
+        mapfile -t keys < <(gsettings list-keys "${schema}:${p}" 2>/dev/null || true)
+        (( ${#keys[@]} )) || continue
+        
+        for k in "${keys[@]}"; do
+          [[ -z "$k" ]] && continue
+          local v
+          v="$(gsettings get "${schema}:${p}" "$k" 2>/dev/null || true)"
+          [[ -n "$v" ]] && printf 'SCHEMA:%s PATH:%s KEY:%s VALUE:%s\n' "$schema" "$p" "$k" "$v"
+        done
+      done
+    done > "$output_file"
+  }
+
+  # Split array into N files
+  split_array_to_files(){
+    local -n source_array=$1
+    local num_threads=$2
+    local file_prefix="$3"
+    
+    local total_items=${#source_array[@]}
+    [[ $total_items -eq 0 ]] && return 1
+    
+    local items_per_thread
+    items_per_thread=$(awk "BEGIN {printf \"%.0f\", $total_items / $num_threads}")
+    [[ $items_per_thread -lt 1 ]] && items_per_thread=1
+    
+    local idx=0
+    local file_idx=0
+    local current_file="$tmpdir/${file_prefix}_${file_idx}.txt"
+    
+    for item in "${source_array[@]}"; do
+      echo "$item" >> "$current_file"
+      ((idx++))
+      
+      if [[ $idx -ge $items_per_thread && $file_idx -lt $((num_threads - 1)) ]]; then
+        ((file_idx++))
+        current_file="$tmpdir/${file_prefix}_${file_idx}.txt"
+        idx=0
+      fi
+    done
+    
+    return 0
+  }
+
+  # Process non-relocatable schemas in parallel
+  process_non_relocatable(){
+    local -a all_schemas
+    mapfile -t all_schemas < <(gsettings list-schemas 2>/dev/null | sort -u)
+    
+    [[ ${#all_schemas[@]} -eq 0 ]] && { warn "No non-relocatable schemas found"; return 1; }
+    
+    split_array_to_files all_schemas "$NON_RELOC_THREADS" "schemas" || return 1
+    
+    local -a pids=()
+    local -a output_files=()
+    
+    for ((i=0; i<NON_RELOC_THREADS; i++)); do
+      local schema_file="$tmpdir/schemas_${i}.txt"
+      [[ ! -f "$schema_file" ]] && continue
+      
+      local output_file="$tmpdir/non_reloc_output_${i}.txt"
+      output_files+=("$output_file")
+      
+      dump_non_reloc "$schema_file" "$output_file" &
+      pids+=($!)
+    done
+    
+    log "Started ${#pids[@]} non-relocatable schema jobs"
+    
+    # Export for later use
+    NON_RELOC_PIDS=("${pids[@]}")
+    NON_RELOC_OUTPUT_FILES=("${output_files[@]}")
+  }
+
+  balance_relocatable(){
+    local -n schemas_array=$1
+    local num_threads=$2
+    local file_prefix="$3"
+    
+    # Extract schemas sorted by entry count (highest to lowest)
+    local schema_counts
+    schema_counts=$(
+      awk -v h="$reloc_header" 'BEGIN{f=0} $0==h{f=1; next} f' "$outfile" \
+      | awk -F'SCHEMA:| PATH:' '{print $2}' \
+      | sort \
+      | uniq -c \
+      | sort -rn \
+      | awk '{print $2}'
+    )
+    
+    local -a sorted_schemas=()
+    
+    if [[ -n "$schema_counts" ]]; then
+      # Read sorted schemas into array
+      mapfile -t sorted_schemas <<< "$schema_counts"
+      
+      # Filter to only include schemas that are in our current rel_schemas array
+      local -a filtered_schemas=()
+      for schema in "${sorted_schemas[@]}"; do
+        [[ -z "$schema" ]] && continue
+        # Check if this schema exists in the input array
+        for input_schema in "${schemas_array[@]}"; do
+          if [[ "$schema" == "$input_schema" ]]; then
+            filtered_schemas+=("$schema")
+            break
+          fi
+        done
+      done
+      
+      # Add any schemas that weren't in the previous run (append to end)
+      for input_schema in "${schemas_array[@]}"; do
+        [[ -z "$input_schema" ]] && continue
+        local found=0
+        for sorted_schema in "${filtered_schemas[@]}"; do
+          if [[ "$input_schema" == "$sorted_schema" ]]; then
+            found=1
+            break
+          fi
+        done
+        [[ $found -eq 0 ]] && filtered_schemas+=("$input_schema")
+      done
+      
+      sorted_schemas=("${filtered_schemas[@]}")
+    else
+      # Fallback to input order if no data extracted
+      sorted_schemas=("${schemas_array[@]}")
+    fi
+    
+    [[ ${#sorted_schemas[@]} -eq 0 ]] && return 1
+    
+    # Create empty thread files
+    for ((i=0; i<num_threads; i++)); do
+      touch "$tmpdir/${file_prefix}_${i}.txt"
+    done
+    
+    # Distribute schemas in zigzag pattern: 0,1,2,3,4,4,3,2,1,0,0,1,2...
+    local schema_idx=0
+    local thread_idx=0
+    local direction=1  # 1 = forward, -1 = backward
+    
+    while [[ $schema_idx -lt ${#sorted_schemas[@]} ]]; do
+      local schema="${sorted_schemas[$schema_idx]}"
+      [[ -n "$schema" ]] && echo "$schema" >> "$tmpdir/${file_prefix}_${thread_idx}.txt"
+      
+      ((schema_idx++))
+      
+      # Move to next thread
+      thread_idx=$((thread_idx + direction))
+      
+      # Check boundaries and reverse direction
+      if [[ $thread_idx -ge $num_threads ]]; then
+        thread_idx=$((num_threads - 1))
+        direction=-1
+      elif [[ $thread_idx -lt 0 ]]; then
+        thread_idx=0
+        direction=1
+      fi
+    done
+    
+    return 0
+  }
+
+  # Process relocatable schemas in parallel
+  process_relocatable(){
+    # Get paths (shared by all threads)
+    local -a paths
+    mapfile -t paths < <(
+      dconf dump / 2>/dev/null \
+      | grep -E '^\[.*\]$' \
+      | sed -e 's/^\[//' -e 's/\]$//' -e 's#^/*#/#' -e 's#/*$#/#' \
+      | sort -u
+    )
+    
+    local paths_file="$tmpdir/paths.txt"
+    printf '%s\n' "${paths[@]}" > "$paths_file"
+    
+    # Get relocatable schemas
+    local -a rel_schemas
+    mapfile -t rel_schemas < <(gsettings list-relocatable-schemas 2>/dev/null | sort -u)
+    
+    [[ ${#rel_schemas[@]} -eq 0 ]] && { warn "No relocatable schemas found"; return 1; }
+    
+    # Use balanced distribution if we have previous data, otherwise simple split
+    if [[ -f "$outfile" ]] && grep -q "^${reloc_header}$" "$outfile" 2>/dev/null; then
+      log "Using balanced distribution based on previous run"
+      balance_relocatable rel_schemas "$RELOC_THREADS" "rel_schemas" || return 1
+    else
+      log "No previous data found, using simple schema distribution"
+      split_array_to_files rel_schemas "$RELOC_THREADS" "rel_schemas" || return 1
+    fi
+
+ 
+
+    local -a pids=()
+    local -a output_files=()
+    
+    for ((i=0; i<RELOC_THREADS; i++)); do
+      local rel_schema_file="$tmpdir/rel_schemas_${i}.txt"
+      [[ ! -f "$rel_schema_file" ]] && continue
+      
+      local rel_output_file="$tmpdir/reloc_output_${i}.txt"
+      output_files+=("$rel_output_file")
+      
+      dump_reloc "$paths_file" "$rel_schema_file" "$rel_output_file" &
+      pids+=($!)
+    done
+    
+    log "Started ${#pids[@]} relocatable schema jobs"
+    
+    # Export for later use
+    RELOC_PIDS=("${pids[@]}")
+    RELOC_OUTPUT_FILES=("${output_files[@]}")
+  }
+
+  # Wait for all jobs and combine results
+  wait_and_combine_results(){
+    log "Waiting for ${#NON_RELOC_PIDS[@]} non-relocatable jobs to complete..."
+    for pid in "${NON_RELOC_PIDS[@]}"; do
+      wait "$pid" || warn "Non-relocatable process $pid failed"
+    done
+    
+    log "Waiting for ${#RELOC_PIDS[@]} relocatable jobs to complete..."
+    for pid in "${RELOC_PIDS[@]}"; do
+      wait "$pid" || warn "Relocatable process $pid failed"
+    done
+    
+    log "Combining results from parallel processing"
+    local outdir
+    outdir="$(dirname "$outfile")"
+    [[ ! -d "$outdir" ]] && mkdir -p "$outdir"
+    
+    local -a all_output_files=("${NON_RELOC_OUTPUT_FILES[@]}" "${RELOC_OUTPUT_FILES[@]}")
+
+
+    local tmpout=$(mktemp)
+    # Write NON_RELOC header and its sorted-unique contents first
+    if [[ ${#NON_RELOC_OUTPUT_FILES[@]} -gt 0 ]]; then
+      printf '%s\n' "$non_reloc_header" > "$tmpout"
+      cat "${NON_RELOC_OUTPUT_FILES[@]}" 2>/dev/null | sort -u >> "$tmpout" || {
+        warn "Failed to write non-reloc outputs"
+        return 1
+      }
+    else
+      # still write header even if there are no non-reloc outputs
+      # printf '%s\n' "$non_reloc_header" > "$outfile"
+      warn "No non-relocatable output files"
+    fi
+
+    # Append RELOC header and its sorted-unique contents
+    if [[ ${#RELOC_OUTPUT_FILES[@]} -gt 0 ]]; then
+      printf '%s\n' "$reloc_header" >> "$tmpout"
+      cat "${RELOC_OUTPUT_FILES[@]}" 2>/dev/null | sort -u >> "$tmpout" || {
+        warn "Failed to write reloc outputs"
+        return 1
+      }
+    else
+      # printf '%s\n' "$reloc_header" >> "$outfile"
+      warn "No relocatable output files"
+    fi
+
+
+    awk '!seen[$0]++' "$tmpout" > "$outfile"
+    rm -f "$tmpout"
+    log "GSettings dump complete ($(wc -l < "$outfile" 2>/dev/null || echo 0) settings)"
+  }
+
+  # Main execution flow
+  local NON_RELOC_THREADS RELOC_THREADS
+  local -a NON_RELOC_PIDS NON_RELOC_OUTPUT_FILES
+  local -a RELOC_PIDS RELOC_OUTPUT_FILES
+  
+  calculate_thread_allocation
+
+  # Start relocatable first (takes longer)
+  process_relocatable
+  
+  # Then start non-relocatable 
+  process_non_relocatable
+  
+  
+  # Wait and combine
+  wait_and_combine_results
+}
+
+dump_gsettings(){
+  if ! command -v gsettings &>/dev/null; then
+    warn "gsettings command not available, skipping gsettings dump"
+    return 0
+  fi
+  
+  log "Dumping GSettings to $GSETTINGS_DIR"
+  local outfile 
+  local non_reloc_header="---NON_RELOC---" 
+  local reloc_header="---RELOC---"
+  if [[ $EUID -eq 0 ]]; then
+    outfile="$GSETTINGS_DIR/sudo"
+  else
+    outfile="$GSETTINGS_DIR/user"
+  fi
+  
+  # Create output directory if it doesn't exist
+  mkdir -p "$(dirname "$outfile")" || { error "Failed to create directory for gsettings output"; return 1; }
+
+  # ---------- workers ----------
+  dump_non_reloc() {
+    # Single pass over non-reloc schemas using list-recursively
+    gsettings list-schemas 2>/dev/null | sort -u | while read -r s; do
+      gsettings list-recursively "$s" 2>/dev/null || true
+    done | while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local schema=${line%% *}; line=${line#* }
+      local key=${line%% *};   local value=${line#* }
+      [[ "$value" == "$line" ]] && value=""
+      printf 'SCHEMA:%s PATH:/ KEY:%s VALUE:%s\n' "$schema" "$key" "$value"
+    done
+  }
+
+  dump_reloc() { 
+    local paths_file="$1" 
+    local schemas_file="$2"
+    [[ ! -f "$paths_file" ]] && { warn "Paths file not found: $paths_file"; return 1; }
+    [[ ! -f "$schemas_file" ]] && { warn "Schemas file not found: $schemas_file"; return 1; }
+    
+    local -a paths rel_schemas
+    mapfile -t paths        < "$paths_file" || { warn "Failed to read paths from $paths_file"; return 1; }
+    mapfile -t rel_schemas  < "$schemas_file" || { warn "Failed to read schemas from $schemas_file"; return 1; }
+
+    for schema in "${rel_schemas[@]}"; do
+      [[ -z "$schema" ]] && continue
+      for path in "${paths[@]}"; do
+        [[ -z "$path" ]] && continue
+        while IFS= read -r line; do
+          [[ -z "$line" ]] && continue
+          # list-recursively format: "<schema> <key> <value...>"
+          local _s=${line%% *}; line=${line#* }
+          local _k=${line%% *}; local _v=${line#* }
+          printf 'SCHEMA:%s PATH:%s KEY:%s VALUE:%s\n' "$schema" "$path" "$_k" "$_v"
+        done < <(gsettings list-recursively "${schema}:${path}" 2>/dev/null || true)
+      done
+    done
+  }
+
+  split_array_to_files(){
+    local -n src=$1; 
+    local n_threads=$2; 
+    local prefix="$3"; 
+    local dir="$4"
+    local total=${#src[@]}
+    (( total == 0 )) && return 1
+    local per=$(( (total + n_threads - 1) / n_threads ))
+    local idx=0 file_idx=0
+    local f="$dir/${prefix}_${file_idx}.txt"
+    : > "$f" || { warn "Failed to create file: $f"; return 1; }
+    for item in "${src[@]}"; do
+      echo "$item" >> "$f" || { warn "Failed to write to file: $f"; return 1; }
+      (( ++idx % per == 0 && file_idx+1 < n_threads )) && { ((file_idx++)); f="$dir/${prefix}_${file_idx}.txt"; : > "$f" || { warn "Failed to create file: $f"; return 1; }; }
+    done
+    return 0
+  }
+
+  RELOC_THREADS=1
+  calc_threads(){
+    # ---------- thread counts ----------
+    local total_cores; 
+    total_cores=$(nproc 2>/dev/null || echo 1)
+    local available=$(( (total_cores * THREAD_PERCENTAGE + 50) / 100 ))
+    (( available < 1 )) && available=1
+    local NON_RELOC_THREADS=1
+    RELOC_THREADS=$(( available - NON_RELOC_THREADS ))
+    (( RELOC_THREADS < 1 )) && RELOC_THREADS=1
+    # cap to avoid DBus/backend thrash; tune via GSETTINGS_MAX_THREADS if you want
+
+    if [[ -n "$GSETTINGS_MAX_THREADS" ]]; then
+      local cap=$((GSETTINGS_MAX_THREADS - 1))
+      (( RELOC_THREADS > cap )) && RELOC_THREADS=$cap
+    fi
+    
+    return 0
+  }
+  calc_threads || { warn "Thread calculation failed, using defaults"; RELOC_THREADS=1; }
+
+  log "Cores:${total_cores:-1}  non-reloc:1  reloc:$RELOC_THREADS"
+
+  # ---------- temp staging ----------
+  local tmpdir; 
+  tmpdir=$(mktemp -d) || { error "mktemp failed"; return 1; }
+  # Ensure cleanup on exit
+  trap 'rm -rf -- "$tmpdir"' RETURN EXIT
+  
+  local paths_file="$tmpdir/paths.txt"
+  local nonrel_out="$tmpdir/nonrel.out"
+  local -a reloc_outs=()
+
+  # Check for dconf
+  if ! command -v dconf &>/dev/null; then
+    warn "dconf command not available, some paths may be missing"
+    touch "$paths_file" || { error "Failed to create paths file"; return 1; }
+  else
+    dconf dump / 2>/dev/null \
+      | grep -E '^\[.*\]$' \
+      | sed -e 's/^\[//' -e 's/\]$//' -e 's#^/*#/#' -e 's#/*$#/#' \
+      | sort -u > "$paths_file" || { warn "dconf dump failed, some paths may be missing"; echo "/" > "$paths_file"; }
+  fi
+
+  mapfile -t rel_schemas < <(gsettings list-relocatable-schemas 2>/dev/null | sort -u)
+  if (( ${#rel_schemas[@]} == 0 )); then
+    warn "No relocatable schemas found"
+  fi
+
+  # ---------- launch workers ----------
+  local -a pids=()
+
+  # start dump_reloc first since it takes longer
+  # N reloc threads (shard schemas)
+  if (( ${#rel_schemas[@]} > 0 )); then
+    split_array_to_files rel_schemas "$RELOC_THREADS" "rel" "$tmpdir" || warn "Failed to split relocatable schemas, continuing with reduced functionality"
+    for ((i=0; i<RELOC_THREADS; i++)); do
+      local shard="$tmpdir/rel_${i}.txt"
+      [[ -s "$shard" ]] || continue
+      local out="$tmpdir/reloc_${i}.out"
+      reloc_outs+=("$out")
+      dump_reloc "$paths_file" "$shard" > "$out" 2>/dev/null & pids+=($!)
+    done
+  fi
+
+  # 1 non-reloc thread
+  dump_non_reloc > "$nonrel_out" 2>/dev/null & pids+=($!)
+
+  # ---------- wait & combine ----------
+  local failed=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || { warn "worker $pid exited non-zero"; ((failed++)); }
+  done
+  (( failed > 0 )) && warn "$failed worker(s) failed during gsettings dump"
+
+  {
+    printf '%s\n' "$non_reloc_header"
+    [[ -s "$nonrel_out" ]] && cat "$nonrel_out"
+    printf '%s\n' "$reloc_header"
+    for out in "${reloc_outs[@]}"; do
+      [[ -s "$out" ]] && cat "$out"
+    done
+  } | awk '!seen[$0]++' > "$outfile" || { error "Failed to write gsettings data to $outfile"; return 1; }
+
+  local line_count=$(wc -l < "$outfile" 2>/dev/null || echo 0)
+  log "Done dumping gsettings $outfile ($line_count lines)"
+  
+  # trap handles cleanup
+  return 0
+}
+
+dump_all_dconf(){
+  if [[ $EUID -eq 0 ]]; then
+    log "Dumping all DConf databases as root"
+    OUT_DIR="$DCONF_DIR/sudo"
+  else
+    log "Dumping all DConf databases as $user"
+    OUT_DIR="$DCONF_DIR/user"
+  fi
+
+  mkdir -p -- "$OUT_DIR"
+  kb_size() { du -k --apparent-size -- "$1" 2>/dev/null | awk '{print $1}'; }
+  own()     { stat -c '%U:%G' -- "$1" 2>/dev/null || echo '?:?'; }
+  slug()    { printf '%s' "$1" | sed 's#^/##; s#/#_#g; s# #_#g'; }
+
+  say_db()       { local label="$1" path="$2" o s; o="$(own "$path")"; s="$(kb_size "$path")"; printf "%-8s %s  (%s) %s KB\n" "$label" "$path" "$o" "${s:-0}"; }
+  say_runtime()  { local path="$1" o; o="$(own "$path")"; printf "%-8s %s (%s)\n" "RUNTIME" "$path" "$o"; }
+  say_src()      { printf "%-8s %s\n" "SRC" "$1"; }
+  say_profile()  { printf "%-8s %s\n" "PROFILE" "$1"; }
+
+  dump_to() {
+    # $1: label (USER-DB | SYS-DB | PROFILE)
+    # $2: source path (or DB name for SYS-DB)
+    # $3: destination file path
+    local kind="$1" src="$2" out="$3"
+    mkdir -p -- "$(dirname -- "$out")"
+    local tdir
+    tdir="$(mktemp -d)"
+    # trap 'rm -rf -- "$tdir"' RETURN
+
+    case "$kind" in
+      USER-DB)
+        # Point profile to "user-db:user" via XDG_CONFIG_HOME symlink to the exact DB file
+        mkdir -p "$tdir/dconf"
+        ln -s -- "$src" "$tdir/dconf/user"
+        printf 'user-db:user\n' > "$tdir/profile"
+        DCONF_PROFILE="$tdir/profile" XDG_CONFIG_HOME="$tdir" dconf dump / > "$out" || {
+          echo "# ERROR dumping USER-DB $src" > "$out"
+          return 1
+        }
+        ;;
+      SYS-DB)
+        # $src is the compiled DB file path; profile needs only its basename as the DB name
+        local name; name="$(basename -- "$src")"
+        printf 'system-db:%s\n' "$name" > "$tdir/profile"
+        DCONF_PROFILE="$tdir/profile" dconf dump / > "$out" || {
+          echo "# ERROR dumping SYS-DB $src (name=$name)" > "$out"
+          return 1
+        }
+        ;;
+      PROFILE)
+        # Use the profile file directly
+        DCONF_PROFILE="$src" dconf dump / > "$out" || {
+          echo "# ERROR dumping PROFILE $src" > "$out"
+          return 1
+        }
+        ;;
+      *) echo "Unknown dump kind: $kind" >&2; return 2 ;;
+    esac
+    rm -rf -- "$tdir"
+  }
+
+  # ---------- collect homes ----------
+  mapfile -t HOMES < <(
+    awk -F: '($6 ~ /^\/(home|root|var\/lib)\//) && $6 != "" {print $6}' /etc/passwd | sort -u
+  )
+
+  # ---------- 1) USER DBs ----------
+  for H in "${HOMES[@]}"; do
+    [[ -d "$H" ]] || continue
+
+    p="$H/.config/dconf/user"
+    if [[ -f "$p" ]]; then
+      say_db "USER-DB" "$p"
+      dump_to "USER-DB" "$p" "$OUT_DIR/USER-DB_$(slug "$p").dump"
+    fi
+
+    # Flatpak-per-app user dbs
+    if [[ -d "$H/.var/app" ]]; then
+      while IFS= read -r fp; do
+        [[ -f "$fp" ]] || continue
+        say_db "USER-DB" "$fp"
+        dump_to "USER-DB" "$fp" "$OUT_DIR/USER-DB_$(slug "$fp").dump"
+      done < <(find "$H/.var/app" -xdev -type f -path '*/config/dconf/user' 2>/dev/null)
+    fi
+
+    # Snap (best effort)
+    if [[ -d "$H/snap" ]]; then
+      while IFS= read -r sp; do
+        [[ -f "$sp" ]] || continue
+        say_db "USER-DB" "$sp"
+        dump_to "USER-DB" "$sp" "$OUT_DIR/USER-DB_$(slug "$sp").dump"
+      done < <(find "$H/snap" -xdev -type f -path '*/dconf/user' 2>/dev/null)
+    fi
+  done
+
+  # Common display manager/system users
+  while IFS= read -r dmdb; do
+    [[ -f "$dmdb" ]] || continue
+    say_db "USER-DB" "$dmdb"
+    dump_to "USER-DB" "$dmdb" "$OUT_DIR/USER-DB_$(slug "$dmdb").dump"
+  done < <(
+    find /var/lib -xdev -type f \
+      \( -path '/var/lib/gdm*/.config/dconf/user' \
+      -o -path '/var/lib/sddm/.config/dconf/user' \
+      -o -path '/var/lib/lightdm/.config/dconf/user' \) 2>/dev/null
+  )
+
+  # ---------- 2) RUNTIME (note only; no dump) ----------
+  if [[ -d /run/user ]]; then
+    while IFS= read -r r; do
+      say_runtime "$r"
+      # not dumpable; sockets/shm
+    done < <(find /run/user -type f -path '/run/user/*/dconf/*' 2>/dev/null)
+  fi
+
+  # ---------- 3) SYSTEM/VENDOR compiled DBs ----------
+  if [[ -d /etc/dconf/db ]]; then
+    while IFS= read -r sdb; do
+      say_db "SYS-DB" "$sdb"
+      dump_to "SYS-DB" "$sdb" "$OUT_DIR/SYS-DB_$(slug "$sdb").dump"
+    done < <(find /etc/dconf/db -maxdepth 1 -type f 2>/dev/null | sort)
+  fi
+
+  if [[ -d /usr/share/dconf/db ]]; then
+    while IFS= read -r vdb; do
+      say_db "SYS-DB" "$vdb"
+      dump_to "SYS-DB" "$vdb" "$OUT_DIR/SYS-DB_$(slug "$vdb").dump"
+    done < <(find /usr/share/dconf/db -maxdepth 1 -type f 2>/dev/null | sort)
+  fi
+
+  # ---------- 4) SOURCES (list only; not dumped) ----------
+  if [[ -d /etc/dconf/db ]]; then
+    while IFS= read -r src; do
+      say_src "$src"
+      # You could copy sources if desired:
+      # install -D -m 0644 -- "$src" "$OUT_DIR/SRC_$(slug "$src")"
+    done < <(find /etc/dconf/db -type f \( -path '*/db/*.d/*' -o -name '*.keyfile' -o -name '*.conf' \) 2>/dev/null | sort)
+  fi
+  if [[ -d /usr/share/dconf/db ]]; then
+    while IFS= read -r src; do
+      say_src "$src"
+    done < <(find /usr/share/dconf/db -type f -path '*/db/*.d/*' 2>/dev/null | sort)
+  fi
+
+  # ---------- 5) PROFILES (dump each profile's effective view) ----------
+  for profdir in /etc/dconf/profile /usr/share/dconf/profile; do
+    [[ -d $profdir ]] || continue
+    while IFS= read -r pf; do
+      say_profile "$pf"
+      dump_to "PROFILE" "$pf" "$OUT_DIR/PROFILE_$(slug "$pf").dump"
+    done < <(find "$profdir" -maxdepth 1 -type f 2>/dev/null | sort)
+  done
+}
+
+dump_cron(){
+  log "Dumping crontab"
+  local outdir="$CRON_DIR"
+  local tmpdir
+  tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+  local uname="${user:-$USER}"
+
+  # Non-root: only save user crontab if it exists and is non-empty
+  if [[ $EUID -ne 0 ]]; then
+    crontab -l 2>/dev/null > "$tmpdir/crontab_${uname}.txt" || true
+    if [[ -s "$tmpdir/crontab_${uname}.txt" ]]; then
+      mkdir -p "$outdir"
+      mv -- "$tmpdir/crontab_${uname}.txt" "$outdir/"
+    fi
+    rm -rf -- "$tmpdir"
+    return
+  fi
+
+  # Root: save root crontab if present
+  crontab -l 2>/dev/null > "$tmpdir/crontab_root.txt" || true
+  if [[ -s "$tmpdir/crontab_root.txt" ]]; then
+    mkdir -p "$outdir"
+    mv -- "$tmpdir/crontab_root.txt" "$outdir/"
+  fi
+
+  # /etc/crontab only if exists and non-empty
+  if [[ -f /etc/crontab && -s /etc/crontab ]]; then
+    [[ -d "$outdir" ]] || mkdir -p "$outdir"
+    cp -- /etc/crontab "$outdir/etc_crontab.txt"
+  fi
+
+  # /etc/cron.d: copy only non-empty regular files, create dest dir only if needed
+  if [[ -d /etc/cron.d ]]; then
+    local destdir="$outdir/cron.d"
+    local copied="false"
+    for f in /etc/cron.d/*; do
+      [[ -f "$f" ]] || continue
+      [[ -s "$f" ]] || continue
+      if [[ "$copied" == "false" ]]; then
+        mkdir -p "$destdir"
+        copied="true"
+      fi
+      cp -a -- "$f" "$destdir/" || true
+    done
+  fi
+
+  rm -rf -- "$tmpdir"
+}
+
+dump_systemd(){
+  # return immediately if there is no systemctl
+  if ! command -v systemctl &>/dev/null; then
+    return 1
+  fi
+  log "Dumping systemd"
+  local outdir="$SYSTEMD_DIR"
+  local tmpdir
+  tmpdir=$(mktemp -d) || { warn "mktemp failed"; return 1; }
+  trap 'rm -rf -- "$tmpdir"' RETURN
+
+  if [[ $EUID -eq 0 ]]; then
+    log "Dumping systemd as root"
+    systemctl list-unit-files 2>/dev/null | sort > "$tmpdir/system_unit_files.txt" || true
+    # systemctl list-units --all 2>/dev/null | sort > "$tmpdir/system_units.txt" || true
+    systemctl list-timers --all 2>/dev/null | sort > "$tmpdir/system_timers.txt" || true
+    sudo systemctl list-timers --all --no-legend --no-pager | awk '{print $(NF-1), $NF}' | column -t | sort > "$tmpdir/system_timers.txt" || true
+    # Failed units
+    systemctl --failed 2>/dev/null > "$tmpdir/failed_units.txt" || true
+  else
+    log "Dumping systemd $user"
+    systemctl --user list-unit-files 2>/dev/null | sort > "$tmpdir/user_unit_files.txt" || true
+    systemctl --user list-timers --all --no-legend --no-pager | awk '{print $(NF-1), $NF}' | column -t | sort > "$tmpdir/system_timers.txt" || true
+  fi
+
+  # Move only non-empty files and create outdir only if needed
+  for f in "$tmpdir"/*; do
+    [[ -f "$f" && -s "$f" ]] || continue
+    [[ -d "$outdir" ]] || mkdir -p "$outdir"
+    mv -- "$f" "$outdir/$(basename "$f")"
+  done
+}
+
+# ============================================================================
+# ONLY SUDO DUMPS
+# ============================================================================
+
+dump_docker(){
+  if ! command -v docker &>/dev/null && ! docker info &>/dev/null; then
+    log "docker not avialable"
+    return
+  fi
+  log "Dumping Docker (system/daemon)"
+  local outdir="$DOCKER_DIR"
+  
+  local tmp=$(mktemp -d)
+ 
+  docker ps -a --format='{{.ID}}|{{.Names}}|{{.Image}}|{{.CreatedAt}}' 2>/dev/null \
+    | sort > "$tmp/containers.txt" || warn "Docker ps failed"
+  docker images --format='{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}|{{.CreatedAt}}' 2>/dev/null \
+    | sort > "$tmp/images.txt" || warn "Docker images failed"
+  docker network ls --format='{{.ID}}|{{.Name}}|{{.Driver}}|{{.Scope}}' 2>/dev/null \
+    | sort > "$tmp/networks.txt" || warn "Docker network ls failed"
+  docker volume ls --format='{{.Name}}|{{.Driver}}|{{.Mountpoint}}' 2>/dev/null \
+    | sort > "$tmp/volumes.txt" || warn "Docker volume ls failed"
+
+  # docker info 2>/dev/null > "$tmp/docker_info.txt" || true
+  # filter docker info can print out of order sometimes
+  docker info 2>/dev/null \
+  | awk '
+    /^ Runtimes:/{
+      sub(/^ Runtimes: /,"");
+      cmd="tr \" \" \"\n\" | sort | paste -sd\" \" -"
+      print " Runtimes: " |& cmd
+      print $0 |& cmd   # feed the runtimes list
+      close(cmd); next
+    }
+    {print}
+  ' > "$tmp/docker_info.txt" || true
+  
+  
+  for file in "$tmp"/*; do
+    if [[ -s "$file" ]]; then
+      [[ ! -d "$outdir" ]] && mkdir -p "$outdir"
+      cp "$file" "$outdir/$(basename "$file")"
+    fi
+  done
+  rm -rf $tmp
+}
+
+dump_podman(){
+  if ! command -v podman &>/dev/null || ! podman info &>/dev/null; then
+    log "podman not available"
+    return
+  fi
+  log "Dumping Podman (system/daemon)"
+  local outdir="$PODMAN_DIR"
+  local tmp
+  tmp="$(mktemp -d)" || { warn "mktemp failed"; return 1; }
+
+  podman ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Created}}' 2>/dev/null \
+    | sort > "$tmp/containers.txt" || warn "podman ps failed"
+  podman images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.Size}}|{{.Created}}' 2>/dev/null \
+    | sort > "$tmp/images.txt" || warn "podman images failed"
+  podman network ls --format '{{.ID}}|{{.Name}}|{{.Driver}}|{{.Scope}}' 2>/dev/null \
+    | sort > "$tmp/networks.txt" || warn "podman network ls failed"
+  podman volume ls --format '{{.Name}}|{{.Driver}}|{{.Mountpoint}}' 2>/dev/null \
+    | sort > "$tmp/volumes.txt" || warn "podman volume ls failed"
+  podman info 2>/dev/null > "$tmp/podman_info.txt" || true
+
+  for file in "$tmp"/*; do
+    if [[ -s "$file" ]]; then
+      [[ ! -d "$outdir" ]] && mkdir -p "$outdir"
+      cp -- "$file" "$outdir/$(basename "$file")"
+    fi
+  done
+
+  rm -rf -- "$tmp"
+}
+
+dump_network_firewall(){
+  log "Dumping network and firewall configuration"
+  local outdir="$NETWORK_DIR"
+  mkdir -p "$outdir"
+  
+  # Network interfaces
+  # ip addr show 2>/dev/null > "$outdir/ip_addr.txt" || true
+  ip addr show 2>/dev/null | grep -v -E '[0-9]+sec' > "$outdir/ip_addr.txt" || true
+  ip route show 2>/dev/null > "$outdir/ip_route.txt" || true
+  
+  # DNS
+  [[ -f /etc/resolv.conf ]] && cp /etc/resolv.conf "$outdir/resolv.conf"
+  
+  # Firewall rules
+  if command -v iptables &>/dev/null; then
+    iptables -L -n 2>/dev/null > "$outdir/iptables_filter.txt" || true
+    iptables -t nat -L -n 2>/dev/null > "$outdir/iptables_nat.txt" || true
+    iptables -t mangle -L -n 2>/dev/null > "$outdir/iptables_mangle.txt" || true
+  fi
+  
+  if command -v ip6tables &>/dev/null; then
+    ip6tables -L -n 2>/dev/null > "$outdir/ip6tables.txt" || true
+  fi
+  
+  if command -v nft &>/dev/null; then
+    # nft list ruleset 2>/dev/null > "$outdir/nftables.txt" || true
+    nft list ruleset 2>/dev/null \
+      | sed -E 's/\<(packets|bytes)\>[[:space:]]*[0-9]+//g; s/[[:space:]]{2,}/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//' \
+      > "$outdir/nftables.txt" || true
+  fi
+
+  if command -v ufw &>/dev/null; then
+    local udir="$outdir/ufw"
+    mkdir -p "$udir"
+
+    # Basic info and statuses
+    ufw --version              > "$udir/version.txt"           2>&1 || true
+    ufw status                 > "$udir/status.txt"            2>&1 || true
+    # ufw status verbose         > "$udir/status_verbose.txt"    2>&1 || true
+    # ufw status numbered        > "$udir/status_numbered.txt"   2>&1 || true
+
+    # Raw firewall (iptables/nft view)
+    # ufw show raw               > "$udir/show_raw.txt"          2>&1 || true
+          ufw show raw 2>&1 \
+       | sed -E 's/[0-9]+[[:space:]]*packets/packets/g; s/[0-9]+[[:space:]]*bytes/bytes/g' \
+       | awk '{$1=""; $2=""; sub(/^[[:space:]]+/,""); print}' > "$udir/show_raw.txt" || true
+    # ufw show listening         > "$udir/show_listening.txt"    2>&1 || true
+    ufw show listening 2>&1 | grep -v -F '(brave)' > "$udir/show_listening.txt" || true
+    ufw show logging           > "$udir/show_logging.txt"      2>&1 || true
+
+    # Application profiles
+    ufw app list               > "$udir/app_list.txt"          2>&1 || true
+    mapfile -t __apps < <(ufw app list 2>/dev/null | sed -n 's/^[[:space:]]\* \(.*\)$/\1/p')
+    for __app in "${__apps[@]}"; do
+      __safe="$(sed 's/[^A-Za-z0-9._-]/_/g' <<<"$__app")"
+      ufw app info "$__app" > "$udir/app_${__safe}.txt" 2>&1 || true
+    done
+
+    # Config files (rules & policy)
+    if [[ -d /etc/ufw ]]; then
+      mkdir -p "$udir/etc_ufw"
+      for f in ufw.conf before.rules before6.rules after.rules after6.rules user.rules user6.rules sysctl.conf; do
+        [[ -f "/etc/ufw/$f" ]] && cp -a "/etc/ufw/$f" "$udir/etc_ufw/$f" || true
+      done
+      [[ -d /etc/ufw/applications.d ]] && cp -a /etc/ufw/applications.d "$udir/etc_ufw/" || true
+    fi
+
+  fi
+
+}
+
+dump_virsh(){
+  if ! command -v virsh &>/dev/null; then
+    log "virsh not available"
+    return
+  fi
+  log "Dumping KVM/libvirt virsh configuration"
+  local outdir="$VIRSH_DIR"
+  mkdir -p "$outdir"
+  
+ 
+    # System VMs
+  virsh -c qemu:///system list --all 2>/dev/null > "$outdir/vms_system.txt" || \
+    echo "# No system VMs or libvirt not running" > "$outdir/vms_system.txt"
+  
+  virsh -c qemu:///system net-list --all 2>/dev/null > "$outdir/networks_system.txt" || true
+  virsh -c qemu:///system pool-list --all 2>/dev/null > "$outdir/pools_system.txt" || true
+  
+  # Dump VM configs
+  mapfile -t vms < <(virsh -c qemu:///system list --all --name 2>/dev/null | grep -v '^$')
+  if [[ ${#vms[@]} -gt 0 ]]; then
+    mkdir -p "$outdir/vm_configs"
+    for vm in "${vms[@]}"; do
+      virsh -c qemu:///system dumpxml "$vm" 2>/dev/null > "$outdir/vm_configs/${vm}.xml" || true
+    done
+    fi
+
+}
+
+dump_kernel_modules(){
+  log "Dumping kernel modules"
+  local outdir="$KERNEL_DIR"
+  mkdir -p "$outdir"
+  
+  lsmod 2>/dev/null | awk '{ printf "%s", $1; for(i=4;i<=NF;i++) printf " %s", $i; printf "\n" }' | sort > "$outdir/lsmod.txt" || true
+  uname -a 2>/dev/null > "$outdir/uname.txt" || true
+}
+
+
+
+# ============================================================================
+# FILES AND PERMS
+# ============================================================================
+
+filter_comments_whitespace(){
+  local raw="$1"
+  [[ -z "$raw" ]] && return 1
+  
+  local line out i n c nxt
+
+  # trim leading/trailing whitespace
+  line="${raw#"${raw%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+
+  # skip empty or full-line comments
+  [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && return 1
+
+  # remove first unescaped '#' while honoring escapes (convert '\#' -> '#')
+  out=""
+  i=0
+  n=${#line}
+  while (( i < n )); do
+    c="${line:i:1}"
+    if [[ "$c" == '\' && $((i+1)) -lt $n ]]; then
+      nxt="${line:i+1:1}"
+      # if escaped hash, append literal '#' otherwise append the escaped char
+      if [[ "$nxt" == '#' ]]; then
+        out+='#'
+      else
+        out+="$nxt"
+      fi
+      i=$((i+2))
+      continue
+    fi
+    if [[ "$c" == '#' ]]; then
+      break
+    fi
+    out+="$c"
+    i=$((i+1))
+  done
+
+  # final trim
+  out="${out#"${out%%[![:space:]]*}"}"
+  out="${out%"${out##*[![:space:]]}"}"
+
+  [[ -z "$out" ]] && return 1
+  printf '%s' "$out"
+  return 0
+}
+
+parse_config_file(){
+  local file="$1"
+  local require_exclude_keyword="$2"
+  
+  [[ ! -f "$file" ]] && return 0
+  [[ ! -r "$file" ]] && { warn "Cannot read config file: $file"; return 1; }
+  
+  log "Parsing config file: $file"
+  
+  while IFS= read -r raw || [[ -n "$line" ]]; do
+    # filter blank lines, leading/trailing whitespace and inline comments (supports escaped '\#')
+    line="$(filter_comments_whitespace "$raw")" || continue
+    
+    local is_exclude=false
+    local path="$line"
+    
+    if [[ "$line" =~ ^exclude[[:space:]]+ ]]; then
+      is_exclude=true
+      path="${line#exclude }"
+      path=$(echo "$path" | sed 's/^[[:space:]]*//' 2>/dev/null) || { warn "Failed to trim path: $path"; continue; }
+    elif [[ "$require_exclude_keyword" == "false" ]]; then
+      is_exclude=true
+    fi
+
+    # expand ~ and $HOME
+    path="$(eval echo "$path" 2>/dev/null)" || { warn "Failed to expand path: $line"; continue; }
+    
+    [[ -z "$path" ]] && continue
+    
+    #  it is not an absolute path and it does not start with *
+    #  so we will make it relative to $HOME
+    if [[ "${path:0:1}" != '/' ]] && [[ "${path:0:1}" != '*' ]]; then
+      path="$HOME/$path"
+    fi
+    
+    # echo "$is_exclude: $path"
+    if [[ "$is_exclude" == true ]]; then
+      if [[ ! " ${FILE_EXCLUDES[@]} " =~ " $path " ]]; then
+        FILE_EXCLUDES+=("$path")
+        echo "excluding path: $path"
+      fi
+    else
+      if [[ ! " ${FILE_INCLUDES[@]} " =~ " $path " ]]; then
+        FILE_INCLUDES+=("$path")
+      fi
+    fi
+  done < "$file" || { warn "Error reading config file: $file"; return 1; }
+}
+
+parse_config(){
+  log "==== Parsing configuration files ===="
+  
+  [[ -z "$REPO_DIR" ]] && { error "REPO_DIR not set"; return 1; }
+
+  FILE_INCLUDES=()
+  FILE_EXCLUDES=()
+  
+  # if [[ "$REPO_DIR" == "$HOME"/* ]]; then
+  #   USER_EXCLUDES+=("${REPO_DIR#$HOME/}")
+  # else
+  #   SYSTEM_EXCLUDES+=("$REPO_DIR")
+  # fi
+
+  FILE_EXCLUDES+=("$REPO_DIR")
+  
+  parse_config_file "$REPO_DIR/.include" "true" || true
+  parse_config_file "$REPO_DIR/include" "true" || true
+  parse_config_file "$REPO_DIR/.config" "true" || true
+  parse_config_file "$REPO_DIR/.exclude" "false" || true
+  parse_config_file "$REPO_DIR/exclude" "false" || true
+
+  parse_config_file "$ACTUAL_SCRIPT_DIR/.config" "true" || true
+  parse_config_file "$ACTUAL_SCRIPT_DIR/explicit_excludes" "false" || true
+
+  parse_config_file "$SYSTEM_CONFIG_DIR/explicit_excludes" "false" || true
+
+  parse_config_file "$USER_CONFIG_DIR/.include" "true" || true
+  parse_config_file "$USER_CONFIG_DIR/include" "true" || true
+  parse_config_file "$USER_CONFIG_DIR/.config" "true" || true
+  parse_config_file "$USER_CONFIG_DIR/.exclude" "false" || true
+  parse_config_file "$USER_CONFIG_DIR/exclude" "false" || true
+  parse_config_file "$USER_CONFIG_DIR/explicit_excludes" "false" || true
+  
+  log "Config parsing complete: ${#FILE_INCLUDES[@]} includes, ${#FILE_EXCLUDES[@]} excludes"
+}
+
+can_access_kind() {
+  local p="$1"
+  [[ -z "$p" ]] && return 1
+  
+  if [[ -d "$p" ]]; then
+    # require r+x so we can list the directory; change to `[[ -x $p ]]` if
+    # “entering” is enough for your use-case.
+    if ls -1A -- "$p" >/dev/null 2>&1; then
+    # if [[ -x $p ]] >/dev/null 2>&1; then
+      printf 'dir\n'
+      return 0
+    fi
+  elif [[ -e $p ]]; then
+    if head -c 0 -- "$p" >/dev/null 2>&1; then
+      printf 'file\n'
+      return 0
+    fi
+  fi
+  return 1
+}
+
+track_files(){
+  if ! command -v rsync &>/dev/null; then
+    error "rsync command not available"
+    return 1
+  fi
+  
+  parse_config || { error "Failed to parse config"; return 1; }
+
+  # remove trailing slashes from dir paths
+  normalize_dir(){
+    local dir_path="$1"
+    # empty -> fail
+    [[ -z "$dir_path" ]] && return 1
+
+    # if input is only slashes, normalize to single root slash
+    if [[ "$dir_path" =~ ^/+$/ ]]; then
+      printf '/\n'
+      return 0
+    fi
+
+    # remove trailing slashes
+    while [[ "${dir_path: -1}" == "/" ]]; do
+      dir_path="${dir_path%/}"
+    done
+
+    printf '%s\n' "$dir_path"
+    return 0
+  }
+  
+  build_tree(){
+    local path="$1"
+    local -a stack=()
+    [[ -z "$path" ]] && return 1
+
+    # collect from leaf up to top (stop at root)
+    while [[ "$path" != "/" && -n "$path" ]]; do
+      stack+=("$path")
+      path="$(dirname -- "$path" 2>/dev/null)" || { warn "dirname failed for: $path"; return 1; }
+    done
+
+    # print in reverse so output is top-down
+    local i
+    for (( i=${#stack[@]}-1; i>=0; i-- )); do
+      printf '%s\n' "${stack[i]}"
+    done
+  }
+
+  # for excludes we don't need to walk the whole tree
+  local rsync_excludes=()
+  for exclude in "${FILE_EXCLUDES[@]}"; do
+    [[ -z "$exclude" ]] && continue
+    if [[ -d "$exclude" ]]; then
+      local normalized
+      normalized="$(normalize_dir "$exclude" 2>/dev/null)" || { warn "Failed to normalize: $exclude"; continue; }
+      exclude="${normalized}/**"
+    fi
+    rsync_excludes+=("--exclude=$exclude")
+  done
+
+
+  # for includes we have to dirname our wat up the tree to
+  # 1. make sure we have acces to it
+  # 2. build the include list
+  local rsync_includes=()
+  for include in "${FILE_INCLUDES[@]}"; do
+    [[ -z "$include" ]] && continue
+    
+    # parent="$(dirname $include)"
+    kind="$(can_access_kind "$include" 2>/dev/null)"
+    if [[ -z "$kind" ]]; then
+      warn "cannot access $include, not including it"
+      continue
+    fi
+
+    # call build_tree with the parent of include
+    # ^^^ this is not correct because we want to include the original asweel
+    # mapfile -t path_tree <<<"$(build_tree $(dirname $include))"
+    # build the entire tree from the include all the way back to the src /
+    mapfile -t path_tree <<<"$(build_tree "$include" 2>/dev/null)" || { warn "Failed to build tree for: $include"; continue; }
+    # hang /** off of dirs so they are included as well
+    if [[ "$kind" == "dir" ]]; then
+      local normalized
+      normalized="$(normalize_dir "$include" 2>/dev/null)" || { warn "Failed to normalize: $include"; continue; }
+      path_tree+=("${normalized}/**")
+    fi
+
+    for line in "${path_tree[@]}"; do
+      [[ -z "$line" ]] && continue
+      local ifilter="--include=$line"
+      if [[ ! " ${rsync_includes[*]} " =~ " $ifilter " ]]; then
+        rsync_includes+=("$ifilter")
+      fi
+    done
+
+  done
+   
+  local rsync_cmd="rsync -av --mkpath --prune-empty-dirs"
+  local rsync_path=" / $FILES_DIR"
+
+  $rsync_cmd \
+    "${rsync_excludes[@]}" \
+    "${rsync_includes[@]}" \
+    --exclude=/** \
+    "/" "$FILES_DIR" 2>&1 || { error "rsync failed"; return 1; }
+
+
+  log_cmd(){
+    echo "$rsync_cmd \\"
+    for re in "${rsync_excludes[@]}"; do
+      echo "$re \\"
+    done
+    for ri in "${rsync_includes[@]}"; do
+      echo "$ri \\"
+    done
+    echo "--exclude=/** \\"
+    echo "/ $FILES_DIR"
+  }
+  # log_cmd
+
+  log_paths(){
+
+    for fe in "${FILE_EXCLUDES[@]}"; do
+      echo "exclude: $fe"
+    done
+    for fi in "${FILE_INCLUDES[@]}"; do
+      echo "include: $fi"
+    done
+  }
+  # log_paths
+  
+  log "File tracking complete"
+  # [[ -f "$PERMISSION_FILE" ]] && rm "$PERMISSION_FILE"
+  track_permissions "$FILES_DIR"
+}
+
+track_permissionsv1() {
+  local start_dir="$1"
+  local path_header="_PATH: "
+  local user_header="_USER: "
+  local group_header="_GROUP: "
+  local mode_header="_MODE: "
+  
+  # Validate inputs
+  [[ -z "$start_dir" ]] && { warn "track_permissions: no start_dir provided"; return 1; }
+  [[ ! -d "$start_dir" ]] && { warn "track_permissions: $start_dir is not a directory"; return 1; }
+  [[ -z "$PERMISSION_FILE" ]] && { error "PERMISSION_FILE not set"; return 1; }
+  
+  [[ ! -f "$PERMISSION_FILE" ]] && : >"$PERMISSION_FILE"
+
+  # Map start_dir system path base syspath
+  local syspath="${start_dir#"$FILES_DIR"}"
+  if [[ -z "$syspath" ]]; then
+    syspath="/"
+  else
+    syspath="/${syspath#/}"
+  fi
+
+  # Iterate immediate children of start_dir
+  while IFS= read -r -d '' entry; do
+    [[ -z "$entry" ]] && continue
+    
+    local name
+    name="$(basename -- "$entry" 2>/dev/null)" || { warn "Failed to get basename for: $entry"; continue; }
+
+    # Build the corresponding system path for THIS entry
+    local sys_entry
+    if [[ "$syspath" == "/" ]]; then
+      sys_entry="/$name"
+    else
+      sys_entry="${syspath%/}/$name"
+    fi
+
+    # Determine kind and stat the actual entry, not the parent
+    local kind
+    kind="$(can_access_kind "$sys_entry" 2>/dev/null || true)"
+    
+
+    if [[ -n "$kind" ]]; then
+      local owner group mode file_entry current_entry
+      owner=$(stat -c '%U' -- "$sys_entry" 2>/dev/null || echo "unknown")
+      group=$(stat -c '%G' -- "$sys_entry" 2>/dev/null || echo "unknown")
+      mode=$(stat -c '%a' -- "$sys_entry" 2>/dev/null || echo "644")
+      file_entry="_PATH:$sys_entry _OWNER:$owner _GROUP:$group _MODE:$mode"
+
+      # Look up existing entry for this exact path
+      current_entry=$(awk -v s="$sys_entry" 'BEGIN{p="_PATH:" s} index($0,p)==1 {print; exit}' \
+        "$PERMISSION_FILE" 2>/dev/null || true)
+
+      if [[ "$current_entry" != "$file_entry" ]]; then
+        if [[ -z "$current_entry" ]]; then
+          printf '%s\n' "$file_entry" >> "$PERMISSION_FILE" || warn "Failed to write to $PERMISSION_FILE"
+        else
+          awk -v s="$sys_entry" -v fe="$file_entry" \
+              'BEGIN{p="_PATH:" s}
+               index($0,p)==1 { print fe; seen=1; next }
+               { print }
+               END { if (!seen) print fe }' \
+              "$PERMISSION_FILE" > "${PERMISSION_FILE}.tmp" &&
+          mv -- "${PERMISSION_FILE}.tmp" "$PERMISSION_FILE" || warn "Failed to update permission entry for: $sys_entry"
+        fi
+      fi
+    fi
+
+    # Recurse if the FILES_DIR entry itself is a directory
+    if [[ -d "$entry" ]]; then
+      track_permissions "$entry"
+    fi
+  done < <(find "$start_dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+
+
+  cleanup_perm_file(){
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # extract the path after "_PATH:" (up to first space)
+      path="${line#*_PATH:}"
+      path="${path%% *}"
+
+      # skip malformed/empty lines
+      [[ -z "$path" ]] && continue
+
+      # we need to remove the trailing / in file_dir if it exist
+
+      # if the corresponding file/dir does not exist under $FILES_DIR, drop this entry
+      local tpath="${FILES_DIR%/}${path}"
+      if [[ -e "$tpath" ]]; then
+      # echo "$tpath YES exist"
+      printf '%s\n' "$line" >> "${PERMISSION_FILE}.tmp.keep"
+      else
+      # omitted - entry removed
+      # echo "$tpath NO exist"
+      :
+      fi
+
+    done <$PERMISSION_FILE
+
+    # replace PERMISSION_FILE atomically with filtered content (preserve when mktemp failed)
+    if [[ -f "${PERMISSION_FILE}.tmp.keep" ]]; then
+      mv -- "${PERMISSION_FILE}.tmp.keep" "$PERMISSION_FILE"
+      else
+      # no remaining entries -> truncate file
+      : > "$PERMISSION_FILE"
+    fi
+  }
+  cleanup_perm_file
+}
+
+track_permissions() {
+  local start_dir="$1"
+  local path_label="PATH:"
+  local user_label="OWNER:"
+  local group_label="GROUP:"
+  local mode_label="MODE:"
+  local delimiter='乁õ︵õ乁'
+  
+  # Validate inputs
+  [[ -z "$start_dir" ]] && { warn "track_permissions: no start_dir provided"; return 1; }
+  [[ ! -d "$start_dir" ]] && { warn "track_permissions: $start_dir is not a directory"; return 1; }
+  [[ -z "$PERMISSION_FILE" ]] && { error "PERMISSION_FILE not set"; return 1; }
+  
+  [[ ! -f "$PERMISSION_FILE" ]] && : >"$PERMISSION_FILE"
+
+  # Map start_dir system path base syspath
+  local syspath="${start_dir#"$FILES_DIR"}"
+  if [[ -z "$syspath" ]]; then
+    syspath="/"
+  else
+    syspath="/${syspath#/}"
+  fi
+
+  # Iterate immediate children of start_dir
+  while IFS= read -r -d '' entry; do
+    [[ -z "$entry" ]] && continue
+    
+    local name
+    name="$(basename -- "$entry" 2>/dev/null)" || { warn "Failed to get basename for: $entry"; continue; }
+
+    # Build the corresponding system path for THIS entry
+    local sys_entry
+    if [[ "$syspath" == "/" ]]; then
+      sys_entry="/$name"
+    else
+      sys_entry="${syspath%/}/$name"
+    fi
+
+    # Determine kind and stat the actual entry, not the parent
+    local kind
+    kind="$(can_access_kind "$sys_entry" 2>/dev/null || true)"
+    
+
+    if [[ -n "$kind" ]]; then
+      local owner group mode file_entry current_entry
+      owner=$(stat -c '%U' -- "$sys_entry" 2>/dev/null || echo "unknown")
+      group=$(stat -c '%G' -- "$sys_entry" 2>/dev/null || echo "unknown")
+  mode=$(stat -c '%a' -- "$sys_entry" 2>/dev/null || echo "644")
+  file_entry="${path_label}${sys_entry}${delimiter}${user_label}${owner}${delimiter}${group_label}${group}${delimiter}${mode_label}${mode}${delimiter}"
+
+      # Look up existing entry for this exact path
+      current_entry=$(awk -v p="${path_label}${sys_entry}" 'index($0,p)==1 {print; exit}' \
+        "$PERMISSION_FILE" 2>/dev/null || true)
+
+      if [[ "$current_entry" != "$file_entry" ]]; then
+        if [[ -z "$current_entry" ]]; then
+          printf '%s\n' "$file_entry" >> "$PERMISSION_FILE" || warn "Failed to write to $PERMISSION_FILE"
+        else
+          awk -v p="${path_label}${sys_entry}" -v fe="$file_entry" \
+              'index($0,p)==1 { print fe; seen=1; next }
+               { print }
+               END { if (!seen) print fe }' \
+              "$PERMISSION_FILE" > "${PERMISSION_FILE}.tmp" &&
+          mv -- "${PERMISSION_FILE}.tmp" "$PERMISSION_FILE" || warn "Failed to update permission entry for: $sys_entry"
+        fi
+      fi
+    fi
+
+    # Recurse if the FILES_DIR entry itself is a directory
+    if [[ -d "$entry" ]]; then
+      track_permissions "$entry"
+    fi
+  done < <(find "$start_dir" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+
+
+  cleanup_perm_file(){
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      # extract the path after the path_label (up to first space)
+      path="${line#*${path_label}}"
+      path="${path%% *}"
+
+      # skip malformed/empty lines
+      [[ -z "$path" ]] && continue
+
+      # we need to remove the trailing / in file_dir if it exist
+
+      # if the corresponding file/dir does not exist under $FILES_DIR, drop this entry
+      local tpath="${FILES_DIR%/}${path}"
+      if [[ -e "$tpath" ]]; then
+      # echo "$tpath YES exist"
+      printf '%s\n' "$line" >> "${PERMISSION_FILE}.tmp.keep"
+      else
+      # omitted - entry removed
+      # echo "$tpath NO exist"
+      :
+      fi
+
+    done <$PERMISSION_FILE
+
+    # replace PERMISSION_FILE atomically with filtered content (preserve when mktemp failed)
+    if [[ -f "${PERMISSION_FILE}.tmp.keep" ]]; then
+      mv -- "${PERMISSION_FILE}.tmp.keep" "$PERMISSION_FILE"
+      else
+      # no remaining entries -> truncate file
+      : > "$PERMISSION_FILE"
+    fi
+  }
+  cleanup_perm_file
+}
+
+
+
+# ============================================================================
+# runs
+# ============================================================================
+
+testing(){
+  echo "we are testing"
+  
+
+}
+
+run_task(){
+  local func_name="$1"
+  local description="$2"
+  
+  # Track task start time (seconds since epoch with nanoseconds)
+  local start_ts end_ts elapsed_ms elapsed_s
+  start_ts=$(date +%s%3N)
+
+  log "Starting: $description"
+
+  local temp_log
+  temp_log=$(mktemp)
+  local exit_code=0
+
+  # Run function and capture both stdout and stderr
+  "$func_name" >"$temp_log" 2>&1 || exit_code=$?
+
+  end_ts=$(date +%s%3N)
+  # compute elapsed milliseconds (end - start)
+  elapsed_ms=$((end_ts - start_ts))
+  # convert to seconds with millisecond precision
+  elapsed_s=$(awk "BEGIN {printf \"%.3f\", ${elapsed_ms}/1000}")
+
+  if [[ $exit_code -eq 0 ]]; then
+    log "Completed: $description (duration: ${elapsed_s}s)"
+    # If there's output, log it as debug info
+    if [[ -s "$temp_log" && "$VERBOSE" == true ]]; then
+      log "  Output: $(head -2 "$temp_log" | tr '\n' ' ')"
+    fi
+  else
+    local error_output=""
+    if [[ -s "$temp_log" ]]; then
+      error_output=" - $(head -3 "$temp_log" | tr '\n' ' ')"
+    fi
+    warn "$description failed (exit code: $exit_code) (duration: ${elapsed_s}s)$error_output"
+  fi
+
+  rm -f "$temp_log"
+  return $exit_code
+}
+
+
+
+# These functions are no longer used directly - tasks are now managed by the runner
+both_sloot(){
+  run_task dump_gsettings "Dumping GSettings schemas, keys and values (user/sudo context)"
+  run_task dump_all_dconf "Dumping all DConf databases (user, system and profile dumps)"
+  run_task dump_systemd "Collecting systemd unit files, units, timers and failed units"
+  run_task dump_cron "Collecting user and system crontabs and /etc/cron.d files"
+  run_task track_files "Collecting configured files from system and home, and recording permissions"
+}
+
+user_sloot(){
+  run_task dump_pkg_apps "Listing installed packages, Flatpaks, AppImages and desktop entries"
+  run_task dump_python "Recording Python packages (system, user, pipx) and virtualenv locations"
+  run_task dump_fonts_icons_themes "Recording installed fonts and current GTK/icon/cursor themes"
+  run_task dump_gnome_extensions "Listing GNOME Shell version and enabled/disabled extensions"
+}
+
+root_sloot(){
+  run_task dump_podman "Dumping Podman containers, images, networks, volumes and daemon info"
+  run_task dump_docker "Dumping Docker containers, images, networks, volumes and daemon info"
+  run_task dump_network_firewall "Collecting network interfaces, routes, DNS and firewall rules (iptables/nft/ufw)"
+  run_task dump_virsh "Dumping libvirt/virsh VM lists, networks, pools and VM XML configs"
+  run_task dump_kernel_modules "Recording loaded kernel modules and system uname information"
+  run_task fix_ownership "Fixing repository ownership and permissions for the detected user"
+}
+
+
+
+# ============================================================================
+# SCRIPTS FUNCTIONS
+# ============================================================================
+
+left_trim(){
+  local string="$1"
+  local trimmed=""
+  while IFS= read -r line; do
+    trimmed+="${line#"${line%%[![:space:]]*}"}"$'\n'
+  done <<< "$string"
+  echo -n "$trimmed"
+}
+
+init_repo(){
+  log "Initializing repository at: $REPO_DIR"
+  
+  if [[ ! -d "$REPO_DIR" ]]; then
+    log "Repository directory does not exist, creating: $REPO_DIR"
+    mkdir -p "$REPO_DIR" || error "Failed to create repository directory: $REPO_DIR"
+    log "Successfully created repository directory"
+  else
+    log "Repository directory already exists"
+  fi
+
+  cd "$REPO_DIR" || error "Failed to change to repository directory: $REPO_DIR"
+  log "Changed to repository directory: $REPO_DIR"
+
+  if [[ ! -d .git ]]; then
+    log "Git repository not found, initializing new repository"
+    git init || error "Failed to initialize git repository"
+    log "Git repository initialized successfully"
+    
+    git config user.name "SLOOT Monitor" || warn "Failed to set git user.name"
+    git config user.email "sloot@localhost" || warn "Failed to set git user.email"
+    log "Git configuration set: user.name='SLOOT Monitor', user.email='sloot@localhost'"
+    
+    # DO NOT CREATE README.md THIS IS A LOCAL REPO FORTRACKING CHANAGES
+    echo "**/*.log" > .gitignore || warn "Failed to create .gitignore"
+    echo "logs/" >> .gitignore || warn "Failed to create .gitignore"
+    echo "**$(basename $CHANGE_LOG)" >> .gitignore || warn "Failed to add changelog to .gitignore"
+    
+    
+    # if there is no config in the repo try to src one
+    local repo_config="$REPO_DIR/.config"
+    if [[ ! -f "$repo_config" ]]; then
+      # If a .config exists next to the script or in the system config dir,
+      # copy it into the repo (prefer ACTUAL_SCRIPT_DIR over SYSTEM_CONFIG_DIR).
+      local src_config=""
+      if [[ -f "$ACTUAL_SCRIPT_DIR/.config" && -s "$ACTUAL_SCRIPT_DIR/.config" ]]; then
+        src_config="$ACTUAL_SCRIPT_DIR/.config"
+      elif [[ -f "$SYSTEM_CONFIG_DIR/.config" && -s "$SYSTEM_CONFIG_DIR/.config" ]]; then
+        src_config="$SYSTEM_CONFIG_DIR/.config"
+      fi
+
+      if [[ -n "$src_config" ]]; then
+        if cp -- "$src_config" "$repo_config"; then
+          log "Copied $src_config to $repo_config"
+        else
+          warn "Failed to copy $src_config to $repo_config"
+        fi
+      else
+        echo '
+          # Configuration tracking
+          # One path per line. Prefix with 'exclude' to exclude.
+          # Paths can use $HOME or ~
+          # Examples:
+          #   ~/.config/myprogram
+          #   exclude ~/.config/myprogram/cache
+          #   /etc/ssh/sshd_config
+          ' > "$repo_config"
+
+      fi
+
+    fi
+
+    # Stage all files for initial commit
+    git add .gitignore .config 2>/dev/null || warn "Failed to stage files for initial commit"
+    
+    git commit -m "$INIT_COMMIT_MESSAGE" || warn "Failed to create initial commit"
+    log "Created initial commit with .gitignore and .config"
+  else
+    log "Git repository already initialized"
+  fi
+  
+
+}
+
+fix_ownership(){
+
+
+  log "==== Fixing repository ownership ===="
+  
+  # cd "$REPO_DIR" || { error "Failed to change to repository directory"; return 1; }
+  
+  log "Setting ownership to $user:$user"
+  chown -R "$user:$user" "$REPO_DIR" 2>/dev/null || {
+    error "Failed to set ownership"
+    return 1
+  }
+  
+  log "Setting permissions (u+rwX)"
+  chmod -R u+rwX "$REPO_DIR" 2>/dev/null || {
+    error "Failed to set permissions"
+    return 1
+  }
+  
+  log "Ownership and permissions fixed"
+}
+
+safety_check(){
+  log "Performing safety checks"
+  
+  local missing=()
+  
+  command -v git &>/dev/null || missing+=("git")
+  command -v rsync &>/dev/null || missing+=("rsync")
+  command -v dconf &>/dev/null || missing+=("dconf")
+  command -v gsettings &>/dev/null || missing+=("gsettings")
+  
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    error "Missing required commands: ${missing[*]}"
+  fi
+
+  init_repo
+  
+  log "All required commands available"
+}
+
+do_changelog(){
+  local commit_msg="$1"
+  # local tmp="/home/scott/share/qyksys/.qyksys_master/servcies_master/$commit_msg.txt"
+  # [[ -f "$tmp" ]] && rm "$tmp"
+  # touch "$tmp"
+  
+  local changelog_style='
+    <style>
+    :root {
+      --bordercolor: rgba(127, 127, 127, 0.5);
+      --headercolor: rgba(127, 127, 127, 0.15);
+      --branchblockcolor: rgba(127, 127, 127, 0.02);
+    }
+    details.diff {
+      /* background: #e29fa1ff; */
+      border: 1px solid var(--bordercolor);
+      border-radius: 5px;
+      overflow: hidden;
+      margin-top: 30px;
+    }
+    .diff .branch-block {
+      padding:2px 15px;
+      font-size:.9em; 
+      background:var(--branchblockcolor);
+      border-bottom:1px solid var(--bordercolor);
+      display: flex;
+      justify-content: space-between;
+    }
+    .diff > summary.diff-header {
+      display:flex; 
+      align-items:center; 
+      justify-content:space-between; 
+      gap:.5rem;
+      padding:7px 15px; 
+      background:var(--headercolor);
+      border-bottom:1px solid var(--bordercolor);
+      cursor:pointer; 
+      user-select:none; 
+      list-style:none;
+    }
+
+    .diff > summary::-webkit-details-marker { display:none; }
+    /* .diff > summary::after { content:"▸"; opacity:.7; transition:transform .15s; } */
+    /* details.diff[open] > summary::after { transform:rotate(90deg); } */
+
+    .diff-body { 
+      overflow:hidden; 
+      }
+    .diff-line {
+      display:grid; 
+      grid-template-columns:2ch 1fr; 
+      gap:.5ch;
+      padding:4px 10px 2px 10px; 
+      align-items:baseline; 
+      white-space:pre;
+    }
+    /* .diff-line + .diff-line { padding:2px 10px; } */
+    .diff-line code { background:none; padding:0; }
+    .diff-line::before { content:""; }
+    .diff-add { background: rgba(16,185,129,.10); }
+    .diff-add::before { content:"+"; color:#16a34a; }
+    .diff-del { background: rgba(239,68,68,.10); }
+    .diff-del::before { content:"-"; color:#dc2626; }
+    .diff-ctx { color:#6b7280; }
+    .diff-ctx::before { content:" "; }
+    </style>
+  
+    '
+  changelog_style="$(left_trim "$changelog_style")"
+  local html_template='
+    <details class="diff" close>
+      <summary class="diff-header">
+        <span class="file-header left">___file___marker___</span>
+        <span class="file-header right">___commit___msg___marker___</span>
+      </summary>
+      <div class="diff-body">
+        ___lines___marker___
+      </div>
+    </details>
+    '
+  html_template="$(left_trim "$html_template")"
+  local delete_template='<div class="diff-line diff-del"><code>___content___marker___</code></div>'
+  local add_template='<div class="diff-line diff-add"><code>___content___marker___</code></div>'
+
+  # HTML escape helper
+  html_escape() {
+    local s="$1"
+    s="${s//&/&amp;}"
+    s="${s//</&lt;}"
+    s="${s//>/&gt;}"
+    s="${s//\"/&quot;}"
+    s="${s//\'/&#39;}"
+    printf '%s' "$s"
+  }
+
+  # Create changelog with style if it doesn't exist
+  if [[ ! -f "$CHANGE_LOG" ]]; then
+    touch "$CHANGE_LOG" 
+    echo "$changelog_style" >> "$CHANGE_LOG" 
+  fi
+
+  # Get list of changed files (staged for commit)
+  mapfile -t changed_files < <(git diff --cached --name-only 2>/dev/null)
+
+  # echo "do_changelog changed_files: ${changed_files[@]}" >> "$tmp"
+  # echo "do_changelog logging all diffs $(git diff --cached)" >> "$tmp"
+
+  
+  if [[ ${#changed_files[@]} -eq 0 ]]; then
+    log "No changes to add to changelog"
+    return 0
+  fi
+
+  local all_diffs=""
+  
+  # Process each changed file
+  for file in "${changed_files[@]}"; do
+    local diff_lines=""
+    local has_changes=false
+    
+    while IFS= read -r line; do
+      # echo -e "do_changelog current unfiltered line:\n$line" >> "$tmp"
+      # Skip diff headers and file markers
+      [[ "$line" =~ ^(diff|index|---|\+\+\+|@@) ]] && continue
+      # echo -e "do_changelog current filtered line:\n$line" >> "$tmp"
+      
+      local escaped_line
+      escaped_line="$(html_escape "$line")"
+      
+      if [[ "${line:0:1}" == "-" ]]; then
+        # echo -e "do_changelog current line is a deletion:\n$line" >> "$tmp"
+        # Deletion line
+        local content="${escaped_line:1}"  # Remove leading '-'
+        diff_lines+="${delete_template//___content___marker___/$content}"$'\n'
+        has_changes=true
+      elif [[ "${line:0:1}" == "+" ]]; then
+        # echo -e "do_changelog current line is an addition:\n$line" >> "$tmp"
+        # Addition line
+        local content="${escaped_line:1}"  # Remove leading '+'
+        diff_lines+="${add_template//___content___marker___/$content}"$'\n'
+        has_changes=true
+      # else 
+        # echo -e "do_changelog current line is not deletion or addition:\n$line" >> "$tmp"
+      fi
+    done < <(git diff --cached -- "$file" 2>/dev/null)
+    # echo "git diff --cached -- $file output:\n $(git diff --cached -- "$file" )" >> "$tmp"
+
+    
+    # echo "do_changelog current file: $file has_changes: $has_changes" >> "$tmp"
+    # Only add file to changelog if it had actual changes
+    if [[ "$has_changes" == true ]]; then
+      local file_escaped
+      file_escaped="$(html_escape "$file")"
+      local commit_escaped
+      commit_escaped="$(html_escape "$commit_msg")"
+      
+      local file_diff="$html_template"
+      file_diff="${file_diff//___file___marker___/$file_escaped}"
+      file_diff="${file_diff//___commit___msg___marker___/$commit_escaped}"
+      file_diff="${file_diff//___lines___marker___/$diff_lines}"
+      
+      all_diffs+="$file_diff"$'\n'
+    fi
+  done
+
+  # echo "do_changelog all_difs: $all_diffs" >> "$tmp"
+  # Append all diffs to changelog if any exist
+  if [[ -n "$all_diffs" ]]; then
+    echo "$all_diffs" >> "$CHANGE_LOG" 
+    log "Changelog updated with ${#changed_files[@]} file(s)"
+  else
+    log "No substantive changes to log"
+  fi
+}
+
+
+commit_changes(){
+  log "==== Committing changes to git ===="
+  
+  cd "$REPO_DIR" || { error "Failed to change to repository directory"; return 1; }
+
+  local last_msg
+  last_msg=$(git log -1 --pretty=%B 2>/dev/null || true)
+  # normalize to single line (strip newlines)
+  last_msg="${last_msg//$'\n'/ }"
+
+  if [[ -n "$last_msg" && "$last_msg" == "$INIT_COMMIT_MESSAGE" ]]; then
+    COMMIT_MESSAGE="$FIRST_RUN_MESSAGE"
+  fi
+
+
+  local commit_msg
+  if [[ -n "${COMMIT_MESSAGE:-}" ]]; then
+    commit_msg="$COMMIT_MESSAGE"
+  else
+    commit_msg="$(date '+%Y-%m-%d_%H%M%S') $USER"
+  fi
+
+  git add -A || { error "Failed to stage changes"; return 1; }
+
+  if [[ "$commit_msg" != "$INIT_COMMIT_MESSAGE" && "$commit_msg" != "$FIRST_RUN_MESSAGE" ]]; then
+
+    # changed_files=get a list of all of the changed files
+    # changed_dirs=for all of the changed files get the frist dir relative to REPO_DIR --- $REPO_DIR/<this is what we want>/nested/file.txt
+      mapfile -t changed_files < <(git diff --cached --name-only 2>/dev/null)
+   
+   # Extract first-level directories from changed files
+    declare -A changed_dirs
+    # declare -a changed_dirs
+    for file in "${changed_files[@]}"; do
+      # Extract first directory component
+      first_dir=$(echo "$file" | cut -d'/' -f1)
+      # Skip empty or hidden dirs (like .git)
+      [[ -z "$first_dir" || "$first_dir" == "." || "$first_dir" == ".."* ]] && continue
+      # Add to associative array to eliminate duplicates
+      changed_dirs["$first_dir"]=1
+    done
+
+    # commit_msg="$commit_msg ${changed_dirs[@]}"
+
+    if (( ${#changed_dirs[@]} > 0 )); then
+      local dirs_array=("${!changed_dirs[@]}")
+      local dirs_join
+      IFS=' ' dirs_join="${dirs_array[*]}"
+      unset IFS
+      commit_msg="$commit_msg $dirs_join"
+    fi
+    
+
+    do_changelog "$commit_msg"
+    git add -A || { error "Failed to stage changes"; return 1; }
+  fi
+
+  
+  
+  if git diff --cached --quiet; then
+    log "No changes detected, nothing to commit"
+    return 0
+  fi
+
+  
+  local changed_files
+  changed_files=$(git diff --cached --name-only | wc -l)
+  log "Found changes in $changed_files file(s)"
+  
+
+  
+  if git commit -m "$commit_msg"; then
+    log "Successfully committed changes: $commit_msg"
+    echo "Changes committed: $commit_msg"
+  else
+    error "Failed to commit changes"
+    return 1
+  fi
+}
+
+parse_args(){
+  echo "parsing args"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -d|--dir)
+        REPO_DIR="$2"
+        shift 2
+        ;;
+      -m|--message)
+        COMMIT_MESSAGE="$2"
+        shift 2
+        ;;
+      -s|--skipgsettings)
+        SKIP_GSETTINGS="true"
+        shift
+        ;;
+      -n|--nocommit)
+        NO_COMMIT="true"
+        shift
+        ;;
+      -t|--time)
+        TIMING="true"
+        shift
+        ;;
+      -v|--verbose)
+        VERBOSE=true
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        error "Unknown option: $1"
+        ;;
+    esac
+  done
+}
+
+print_timing(){
+
+  do_werk(){
+    # Usage: do_werk [logfile ...]
+    # If no logfile provided, uses $LOGFILE
+    local files=("$@")
+    if [[ ${#files[@]} -eq 0 ]]; then
+      files=("$LOGFILE")
+    fi
+
+    # Parse log files to extract function name, user, and duration
+    # Then sort by duration (highest first) and format into columns
+    (
+      for file in "${files[@]}"; do
+        if [[ -f "$file" ]]; then
+          grep -E "Completed:.+\(duration:" "$file"
+        else
+          echo "File not found: $file" >&2
+        fi
+      done
+    ) | 
+      sed -E 's/.*Completed: ([^ ]+) ([^:]+).*duration: ([0-9]+\.[0-9]+)s.*/\3 \1 \2/' | 
+      sort -rn | uniq | 
+      awk '{
+          # Fields: $1=duration $2=function $3=user
+          printf "%-25s %-15s (duration: %ss)\n", $2, $3, $1
+          sum += $1
+        }
+        END {
+          printf "%s%50s %7.3fs\n", "", "TOTAL:", sum
+        }'
+      # awk '{
+      #   # Fields: $1=duration $2=function $3=user
+      #   printf "%-25s %-15s (duration: %ss)\n", $2, $3, $1
+      # }'
+
+
+
+
+  }
+
+  extract_field(){
+    local hay="$1" key="$2"
+    printf '%s' "$hay" | grep -m1 -E "${key}" 2>/dev/null | sed -E "s/.*${key}[[:space:]]*//"
+  }
+
+
+  to_epoch(){
+    local s="$1"
+    # Try GNU date parsing first
+    if date -d "$s" +%s >/dev/null 2>&1; then
+      date -d "$s" +%s
+      return
+    fi
+    # Try fallback with parsing components
+    if [[ "$s" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]]+([0-9]{2}):([0-9]{2}):([0-9]{2})$ ]]; then
+      printf '%s' "$(date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}" +%s 2>/dev/null)"
+      return
+    fi
+    echo "0"
+  } 
+
+ 
+  local current_log="$LOG_FILE"
+  local last_log="$(echo "$LOG_FILE" | sed 's/000/001/g')"
+  local do_files=("$current_log")
+ 
+
+  if [[ -f "$current_log" ]]; then
+    local cten="$(head -10 "$current_log" 2>/dev/null || true)" 
+    local cur_user="$(extract_field "$cten" 'User:')" 
+    local cur_start="$(extract_field "$cten" 'Starting at:')" 
+    local cur_epoch=$(to_epoch "$cur_start") 
+  fi
+
+  if [[ -f "$last_log" ]]; then
+    local lten="$(head -10 "$last_log" 2>/dev/null || true)"
+    local last_user="$(extract_field "$lten" 'User:')"
+    local last_start="$(extract_field "$lten" 'Starting at:')"
+    local last_epoch=$(to_epoch "$last_start")
+  fi
+
+  local start_delta=$((cur_epoch - last_epoch))
+
+
+  local start_threshold=${START_THRESHOLD:-15}  # default 15 seconds
+
+
+  if (( start_delta < start_threshold )) && [[ "$last_user" != "$cur_user" ]]; then
+    #  do_werk "$last_log" "$LOG_FILE"
+     do_files+=("$last_log")
+    #  return
+    
+    echo "---------------- MERGING LOG FILES ----------------" > mtmp
+    cat "$last_log" "$LOG_FILE" >> mtmp && mv mtmp "$LOG_FILE"
+  fi
+  
+
+  # local res="$(do_werk "${do_files[@]}")"
+  local res="$(do_werk "$LOG_FILE")"
+  log "$res"
+  # echo "$res" | tee -a "$LOG_FILE"
+
+}
+
+
+runner(){
+  local -n tasks=$1
+  # Calculate actual number of tasks (each task is a pair of elements)
+  local num_tasks=$((${#tasks[@]} / 2))
+  local pids=()
+  local active=0
+  local index=0
+  local max_threads=${MAX_TASK_THREADS:-4}
+  
+  log "Starting runner with $num_tasks tasks, maximum $max_threads parallel threads"
+  
+  # Process tasks in pairs (function name + description)
+  while (( index < (num_tasks * 2) )); do
+    local func="${tasks[index]}"
+    local desc="${tasks[index+1]}"
+    index=$((index+2))
+    # index=$((index+1))
+    
+    # Wait if we've reached max threads
+    while (( ${#pids[@]} >= max_threads )); do
+      local done=false
+      
+      # Check each running task
+      for i in "${!pids[@]}"; do
+        if ! kill -0 "${pids[i]}" 2>/dev/null; then
+          # This PID is done, remove it
+          wait "${pids[i]}" 2>/dev/null || true
+          unset 'pids[i]'
+          done=true
+          break
+        fi
+      done
+      
+      # If no process completed, wait briefly before checking again
+      if [[ "$done" == "false" ]]; then
+        sleep 0.1
+      fi
+      
+      # Re-index the array to clean up gaps
+      pids=("${pids[@]}")
+    done
+    
+    # Start a new task
+    run_task "$func" "$desc" &
+    pids+=($!)
+  done
+  
+  # Wait for remaining tasks to complete
+  log "All tasks started, waiting for ${#pids[@]} remaining task(s) to complete"
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  
+  log "All tasks completed"
+}
+
+
+build_task_list(){
+
+  local tasks_list=(
+    dump_gsettings "dump_gsettings $USER: Dumping GSettings schemas, keys and values"
+    dump_all_dconf "dump_all_dconf $USER: Dumping all DConf databases"
+    dump_systemd "dump_systemd $USER: Collecting systemd unit files, units, timers and failed units"
+    dump_cron "dump_cron $USER: Collecting user and system crontabs"
+    track_files "track_files $USER: Collecting configured files and recording permissions"
+  )
+
+  if [[ $EUID -ne 0 ]]; then
+    # USER
+    tasks_list+=(
+      dump_python "dump_python $USER: Recording Python packages (system, user, pipx) and virtualenv locations"
+      dump_pkg_apps "dump_pkg_apps $USER: Listing installed packages, Flatpaks, AppImages and desktop entries"
+      dump_fonts_icons_themes "dump_fonts_icons_themes $USER: Recording installed fonts and current GTK/icon/cursor themes"
+      dump_gnome_extensions "dump_gnome_extensions $USER: Listing GNOME Shell version and enabled/disabled extensions"
+    )
+  else
+    # ROOT
+    tasks_list+=(
+      dump_virsh "dump_virsh $USER: Dumping libvirt/virsh VM lists, networks, pools and VM XML configs"
+      dump_podman "dump_podman $USER: Dumping Podman containers, images, networks, volumes and daemon info"
+      dump_docker "dump_docker $USER: Dumping Docker containers, images, networks, volumes and daemon info"
+      dump_network_firewall "dump_network_firewall $USER: Collecting network interfaces, routes, DNS and firewall rules (iptables/nft/ufw)"
+      dump_kernel_modules "dump_kernel_modules $USER: Recording loaded kernel modules and system uname information"
+    )
+  fi
+  
+  runner tasks_list
+}
+
+
+main(){
+  # record overall start time (ms precision)
+  local main_start_ts
+  main_start_ts=$(date +%s%3N)
+
+  parse_args "$@"
+  log "========================================"
+  log "USER_SLOOT - User-level System Observation"
+  log "========================================"
+  log "Starting at: $(date '+%Y-%m-%d %H:%M:%S')"
+  log "Repository: $REPO_DIR"
+  log "User: $USER"
+  if [[ -n "${COMMIT_MESSAGE:-}" ]]; then
+    log "Commit message: $COMMIT_MESSAGE"
+  fi
+  log "========================================"
+  log "========================================"
+
+  
+  # make sure packages and repo are available
+  safety_check
+  
+  # begin runs with parallel task execution
+  build_task_list
+  if [[ -z "$NO_COMMIT" ]]; then
+    commit_changes
+    # echo "commit temporarily disabled"
+  fi
+
+  log "========================================"
+  log "SLOOT observation complete"
+  local main_end_ts main_elapsed_ms main_elapsed_s
+  main_end_ts=$(date +%s%3N)
+  main_elapsed_ms=$((main_end_ts - main_start_ts))
+  main_elapsed_s=$(awk "BEGIN {printf \"%.3f\", ${main_elapsed_ms}/1000}")
+  log "Finished at: $(date '+%Y-%m-%d %H:%M:%S')"
+  log "Total runtime: ${main_elapsed_s}s (${main_elapsed_ms}ms)"
+  # track runtime here
+  log "Repository: $REPO_DIR"
+  log "Log file: $LOG_FILE"
+  log "========================================"
+
+
+
+  [[ ! -z "$TIMING" ]] && print_timing
+  [[ $EUID -eq 0 ]] && fix_ownership
+
+}
+
+main "$@"
+exit 0
+
+
+
+# git reset --hard HEAD~1
+
