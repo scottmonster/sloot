@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
-$HOME/.local/bin/sloot -n
-sudo $HOME/.local/bin/sloot -t
+sloot_cmd="$(which sloot)"
+$sloot_cmd -n
+sudo $sloot_cmd -t
+
 
